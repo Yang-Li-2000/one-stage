@@ -4,6 +4,13 @@
 #  Modified by Tianyu Li
 # ---------------------------------------------
 from __future__ import division
+
+import os
+import sys
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_dir = os.path.dirname(current_dir)
+sys.path.append(project_dir)
+
 import argparse
 import copy
 import os
