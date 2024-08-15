@@ -3,6 +3,13 @@
 # ---------------------------------------------
 #  Modified by Tianyu Li
 # ---------------------------------------------
+
+import os
+import sys
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_dir = os.path.dirname(current_dir)
+sys.path.append(project_dir)
+
 import argparse
 import os
 import os.path as osp
@@ -223,8 +230,14 @@ def main():
             model.PALETTE = dataset.PALETTE
 
         if not distributed:
-            model = MMDataParallel(model, device_ids=cfg.gpu_ids)
-            outputs = single_gpu_test(model, data_loader, args.show, args.show_dir)
+            if "gpu_ids" in cfg:
+                model = MMDataParallel(model, device_ids=cfg.gpu_ids)
+            else:
+                model = MMDataParallel(model, device_ids=[0])
+            if args.show:
+                outputs = single_gpu_test(model, data_loader, args.show, args.show_dir)
+            else:
+                outputs = single_gpu_test(model, data_loader, args.show)
         else:
             model = MMDistributedDataParallel(
                 model.cuda(),
