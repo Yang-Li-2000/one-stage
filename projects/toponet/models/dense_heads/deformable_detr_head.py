@@ -24,7 +24,7 @@ from mmdet.models.utils.transformer import TRANSFORMER
 from mmcv.utils import build_from_cfg
 
 # for customized transformer decoder
-from mmdet.models.utils.transformer import DetrTransformerDecoder
+from mmdet.models.utils.transformer import DeformableDetrTransformerDecoder
 from mmdet.models.utils.transformer import TRANSFORMER_LAYER_SEQUENCE
 
 # for customized transformer decoder layer
@@ -36,19 +36,6 @@ from mmcv.cnn.bricks.transformer import build_attention
 
 
 
-
-
-from mmdet.models.utils.transformer import DeformableDetrTransformerDecoder
-
-
-
-
-
-
-
-
-
-# TODO: customize decoder layer: let the forward function return Q and K
 @TRANSFORMER_LAYER.register_module()
 class MyDetrTransformerDecoderLayer(DetrTransformerDecoderLayer):
 
@@ -71,27 +58,6 @@ class MyDetrTransformerDecoderLayer(DetrTransformerDecoderLayer):
             ffn_num_fcs=ffn_num_fcs,
             **kwargs
         )
-        # TODO: customize self attention
-        # num_attn = operation_order.count('self_attn') + operation_order.count(
-        #     'cross_attn')
-        # if isinstance(attn_cfgs, dict):
-        #     attn_cfgs = [copy.deepcopy(attn_cfgs) for _ in range(num_attn)]
-        # else:
-        #     assert num_attn == len(attn_cfgs), f'The length ' \
-        #         f'of attn_cfg {num_attn} is ' \
-        #         f'not consistent with the number of attention' \
-        #         f'in operation_order {operation_order}.'
-        # index = 0
-        # operation_name = 'self_attn'
-        # if 'batch_first' in attn_cfgs[index]:
-        #     assert self.batch_first == attn_cfgs[index]['batch_first']
-        # else:
-        #     attn_cfgs[index]['batch_first'] = self.batch_first
-        # attention = build_attention(attn_cfgs[index])
-        # # Some custom attentions used as `self_attn`
-        # # or `cross_attn` can have different behavior.
-        # attention.operation_name = operation_name
-        # self.attentions[index] = attention
 
     def forward(self,
                 query,
@@ -152,10 +118,17 @@ class MyDetrTransformerDecoderLayer(DetrTransformerDecoderLayer):
                                                      f'to the number of attention in ' \
                                                      f'operation_order {self.num_attn}'
 
+        # check edge cases that are not implemented (when the nuber of self-attn is not 1)
+        if self.operation_order.count('self_attn') < 1:
+            raise NotImplementedError('decoder layer not implemented when no self-attention exist')
+        elif self.operation_order.count('self_attn') > 1:
+            raise NotImplementedError('decoder layer not implemented when multiple passes of self-attention exist')
+
         for layer in self.operation_order:
             if layer == 'self_attn':
                 temp_key = temp_value = query
-                query = self.attentions[attn_index](
+                query, decoder_self_attention_q, decoder_self_attention_k = \
+                self.attentions[attn_index](
                     query,
                     temp_key,
                     temp_value,
@@ -191,31 +164,96 @@ class MyDetrTransformerDecoderLayer(DetrTransformerDecoderLayer):
                     query, identity if self.pre_norm else None)
                 ffn_index += 1
 
-        return query
+        return query, decoder_self_attention_q, decoder_self_attention_k
 
 
-# TODO: customize decoder
 @TRANSFORMER_LAYER_SEQUENCE.register_module()
 class MyDeformableDetrTransformerDecoder(DeformableDetrTransformerDecoder):
     def __init__(self, *args, return_intermediate=False, **kwargs):
 
         super(MyDeformableDetrTransformerDecoder, self).__init__(*args, return_intermediate=return_intermediate, **kwargs)
 
-    # TODO: customize forward: return Q and K
+    def forward(self,
+                query,
+                *args,
+                reference_points=None,
+                valid_ratios=None,
+                reg_branches=None,
+                **kwargs):
+        """Forward function for `TransformerDecoder`.
+
+        Args:
+            query (Tensor): Input query with shape
+                `(num_query, bs, embed_dims)`.
+            reference_points (Tensor): The reference
+                points of offset. has shape
+                (bs, num_query, 4) when as_two_stage,
+                otherwise has shape ((bs, num_query, 2).
+            valid_ratios (Tensor): The radios of valid
+                points on the feature map, has shape
+                (bs, num_levels, 2)
+            reg_branch: (obj:`nn.ModuleList`): Used for
+                refining the regression results. Only would
+                be passed when with_box_refine is True,
+                otherwise would be passed a `None`.
+
+        Returns:
+            Tensor: Results with shape [1, num_query, bs, embed_dims] when
+                return_intermediate is `False`, otherwise it has shape
+                [num_layers, num_query, bs, embed_dims].
+        """
+        output = query
+        intermediate = []
+        intermediate_reference_points = []
+        for lid, layer in enumerate(self.layers):
+            if reference_points.shape[-1] == 4:
+                reference_points_input = reference_points[:, :, None] * \
+                    torch.cat([valid_ratios, valid_ratios], -1)[:, None]
+            else:
+                assert reference_points.shape[-1] == 2
+                reference_points_input = reference_points[:, :, None] * \
+                    valid_ratios[:, None]
+
+            # TODO: use decoder_self_attention_q and decoder_self_attention_k
+            output, decoder_self_attention_q, decoder_self_attention_k = layer(
+                output,
+                *args,
+                reference_points=reference_points_input,
+                **kwargs)
+            output = output.permute(1, 0, 2)
+
+            if reg_branches is not None:
+                tmp = reg_branches[lid](output)
+                if reference_points.shape[-1] == 4:
+                    new_reference_points = tmp + inverse_sigmoid(
+                        reference_points)
+                    new_reference_points = new_reference_points.sigmoid()
+                else:
+                    assert reference_points.shape[-1] == 2
+                    new_reference_points = tmp
+                    new_reference_points[..., :2] = tmp[
+                        ..., :2] + inverse_sigmoid(reference_points)
+                    new_reference_points = new_reference_points.sigmoid()
+                reference_points = new_reference_points.detach()
+
+            output = output.permute(1, 0, 2)
+            if self.return_intermediate:
+                intermediate.append(output)
+                intermediate_reference_points.append(reference_points)
+
+        if self.return_intermediate:
+            return torch.stack(intermediate), torch.stack(
+                intermediate_reference_points)
+
+        return output, reference_points
 
 
 
 
 
-
-# TODO: customize the child class: MyDeformableDetrTransformer:
-#  modify the forward function to return decoder Q and K of each of the 6 layers
 @TRANSFORMER.register_module()
 class MyDeformableDetrTransformer(DeformableDetrTransformer):
-    # def __init__(self, encoder=None, decoder=None, init_cfg=None):
-    #     super(MyDeformableDetrTransformer, self).__init__(encoder, decoder, init_cfg)
-    #     # TODO: customize decoder to return Q and K. Meanwhile, customize decoder layer so that each decoder layer returns Q and V
-    #     abc = 666
+
     def __init__(self,
                  as_two_stage=False,
                  num_feature_levels=4,
@@ -431,7 +469,6 @@ class CustomDeformableDETRHead(DETRHead):
 
         super(CustomDeformableDETRHead, self).__init__(*args, transformer=transformer, **kwargs)
 
-        # TODO: update self.transformer to a custom one
         my_transformer = build_from_cfg(transformer, TRANSFORMER)
         self.transformer = my_transformer
         self.embed_dims = self.transformer.embed_dims
@@ -533,7 +570,7 @@ class CustomDeformableDETRHead(DETRHead):
         query_embeds = None
         if not self.as_two_stage:
             query_embeds = self.query_embedding.weight
-        # TODO: let self.transformer return attention Q and K from its decoder
+
         hs, init_reference, inter_references, \
             enc_outputs_class, enc_outputs_coord = self.transformer(
                     mlvl_feats,
@@ -567,7 +604,6 @@ class CustomDeformableDETRHead(DETRHead):
         outputs_classes = torch.stack(outputs_classes)
         outputs_coords = torch.stack(outputs_coords)
 
-        # TODO: add decoder_attention_queries and decoder_attention_keys to outputs
         outs = {
             'all_cls_scores': outputs_classes,
             'all_bbox_preds': outputs_coords,
