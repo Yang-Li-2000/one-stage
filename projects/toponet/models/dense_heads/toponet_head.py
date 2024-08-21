@@ -22,6 +22,71 @@ from mmdet.models.utils import build_transformer
 from mmdet.models.utils.transformer import inverse_sigmoid
 from mmdet3d.core.bbox.coders import build_bbox_coder
 
+# for customized transformer (TopoNetTransformerDecoderOnly)
+from mmdet.models.utils.builder import TRANSFORMER
+from projects.toponet.models.modules.transformer_decoder_only import TopoNetTransformerDecoderOnly
+
+# for customized decoder
+from projects.toponet.models.modules.sgnn_decoder import TopoNetSGNNDecoder
+from mmcv.cnn.bricks.registry import TRANSFORMER_LAYER_SEQUENCE
+
+# for customized decoder layer
+from projects.toponet.models.modules.sgnn_decoder import SGNNDecoderLayer
+from mmcv.cnn.bricks.registry import TRANSFORMER_LAYER
+
+
+@TRANSFORMER_LAYER.register_module()
+class MySGNNDecoderLayer(SGNNDecoderLayer):
+    def __init__(self,
+                 attn_cfgs,
+                 ffn_cfgs,
+                 operation_order=None,
+                 norm_cfg=dict(type='LN'),
+                 **kwargs):
+        super().__init__(attn_cfgs,
+                         ffn_cfgs,
+                         operation_order=operation_order,
+                         norm_cfg=norm_cfg, **kwargs)
+
+    # TODO: override forward() to handle Q and K
+
+
+# TODO: customize TopoNetSGNNDecoder
+@TRANSFORMER_LAYER_SEQUENCE.register_module()
+class MyTopoNetSGNNDecoder(TopoNetSGNNDecoder):
+    def __init__(self, *args, return_intermediate=False, **kwargs):
+
+        super().__init__(*args, return_intermediate=return_intermediate, **kwargs)
+
+
+    # TODO: override forward() to handle Q and K
+
+
+
+# TODO: customize TopoNetTransformerDecoderOnly
+@TRANSFORMER.register_module()
+class MyTopoNetTransformerDecoderOnly(TopoNetTransformerDecoderOnly):
+
+    def __init__(self,
+                 decoder=None,
+                 embed_dims=256,
+                 pts_dim=3,
+                 **kwargs):
+        super(MyTopoNetTransformerDecoderOnly, self).__init__(
+            decoder=decoder,
+            embed_dims=embed_dims,
+            pts_dim=pts_dim,
+            **kwargs)
+
+
+    # TODO: override forward() to handle Q and K
+
+
+
+
+
+
+
 
 @HEADS.register_module()
 class TopoNetHead(AnchorFreeHead):
