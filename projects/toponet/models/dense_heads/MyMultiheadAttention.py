@@ -2,7 +2,8 @@
 from mmcv.ops.multi_scale_deform_attn import MultiScaleDeformableAttention
 from mmcv.cnn.bricks.transformer import MultiheadAttention
 from mmcv.cnn.bricks.transformer import ATTENTION
-
+import warnings
+from projects.toponet.models.dense_heads import MyNN_MultiheadAttention
 
 
 @ATTENTION.register_module()
@@ -17,7 +18,6 @@ class MyMultiheadAttention(MultiheadAttention):
                  batch_first=False,
                  **kwargs):
 
-        # TODO: replace self.attn with the customized one
         super(MyMultiheadAttention, self).__init__(embed_dims,
                                                    num_heads,
                                                    attn_drop,
@@ -26,13 +26,109 @@ class MyMultiheadAttention(MultiheadAttention):
                                                    init_cfg=init_cfg,
                                                    batch_first=batch_first,
                                                    **kwargs)
-        # if 'dropout' in kwargs:
-        #     warnings.warn(
-        #         'The arguments `dropout` in MultiheadAttention '
-        #         'has been deprecated, now you can separately '
-        #         'set `attn_drop`(float), proj_drop(float), '
-        #         'and `dropout_layer`(dict) ', DeprecationWarning)
-        #     attn_drop = kwargs['dropout']
-        #     dropout_layer['drop_prob'] = kwargs.pop('dropout')
-        # self.attn = MyNN_MultiheadAttention(embed_dims, num_heads, attn_drop, **kwargs)
 
+        if 'dropout' in kwargs:
+            warnings.warn(
+                'The arguments `dropout` in MultiheadAttention '
+                'has been deprecated, now you can separately '
+                'set `attn_drop`(float), proj_drop(float), '
+                'and `dropout_layer`(dict) ', DeprecationWarning)
+            attn_drop = kwargs['dropout']
+            dropout_layer['drop_prob'] = kwargs.pop('dropout')
+        self.attn = MyNN_MultiheadAttention(embed_dims, num_heads, attn_drop, **kwargs)
+
+    def forward(self,
+                query,
+                key=None,
+                value=None,
+                identity=None,
+                query_pos=None,
+                key_pos=None,
+                attn_mask=None,
+                key_padding_mask=None,
+                **kwargs):
+        """Forward function for `MultiheadAttention`.
+
+        **kwargs allow passing a more general data flow when combining
+        with other operations in `transformerlayer`.
+
+        Args:
+            query (Tensor): The input query with shape [num_queries, bs,
+                embed_dims] if self.batch_first is False, else
+                [bs, num_queries embed_dims].
+            key (Tensor): The key tensor with shape [num_keys, bs,
+                embed_dims] if self.batch_first is False, else
+                [bs, num_keys, embed_dims] .
+                If None, the ``query`` will be used. Defaults to None.
+            value (Tensor): The value tensor with same shape as `key`.
+                Same in `nn.MultiheadAttention.forward`. Defaults to None.
+                If None, the `key` will be used.
+            identity (Tensor): This tensor, with the same shape as x,
+                will be used for the identity link.
+                If None, `x` will be used. Defaults to None.
+            query_pos (Tensor): The positional encoding for query, with
+                the same shape as `x`. If not None, it will
+                be added to `x` before forward function. Defaults to None.
+            key_pos (Tensor): The positional encoding for `key`, with the
+                same shape as `key`. Defaults to None. If not None, it will
+                be added to `key` before forward function. If None, and
+                `query_pos` has the same shape as `key`, then `query_pos`
+                will be used for `key_pos`. Defaults to None.
+            attn_mask (Tensor): ByteTensor mask with shape [num_queries,
+                num_keys]. Same in `nn.MultiheadAttention.forward`.
+                Defaults to None.
+            key_padding_mask (Tensor): ByteTensor with shape [bs, num_keys].
+                Defaults to None.
+
+        Returns:
+            Tensor: forwarded results with shape
+            [num_queries, bs, embed_dims]
+            if self.batch_first is False, else
+            [bs, num_queries embed_dims].
+        """
+
+        if key is None:
+            key = query
+        if value is None:
+            value = key
+        if identity is None:
+            identity = query
+        if key_pos is None:
+            if query_pos is not None:
+                # use query_pos if key_pos is not available
+                if query_pos.shape == key.shape:
+                    key_pos = query_pos
+                else:
+                    warnings.warn(f'position encoding of key is'
+                                  f'missing in {self.__class__.__name__}.')
+        if query_pos is not None:
+            query = query + query_pos
+        if key_pos is not None:
+            key = key + key_pos
+
+        # Because the dataflow('key', 'query', 'value') of
+        # ``torch.nn.MultiheadAttention`` is (num_query, batch,
+        # embed_dims), We should adjust the shape of dataflow from
+        # batch_first (batch, num_query, embed_dims) to num_query_first
+        # (num_query ,batch, embed_dims), and recover ``attn_output``
+        # from num_query_first to batch_first.
+        if self.batch_first:
+            query = query.transpose(0, 1)
+            key = key.transpose(0, 1)
+            value = value.transpose(0, 1)
+
+        outputs_from__attn = self.attn(
+            query=query,
+            key=key,
+            value=value,
+            attn_mask=attn_mask,
+            key_padding_mask=key_padding_mask)
+
+        out = outputs_from__attn[0]
+        k = outputs_from__attn[2]
+        v = outputs_from__attn[3]
+
+        if self.batch_first:
+            out = out.transpose(0, 1)
+
+        return identity + self.dropout_layer(self.proj_drop(out)), k, v

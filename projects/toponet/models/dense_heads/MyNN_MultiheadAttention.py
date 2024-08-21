@@ -463,7 +463,7 @@ def my_multi_head_attention_forward(
     v_proj_weight: Optional[Tensor] = None,
     static_k: Optional[Tensor] = None,
     static_v: Optional[Tensor] = None,
-) -> Tuple[Tensor, Optional[Tensor]]:
+) -> Tuple[Tensor, Optional[Tensor], Optional[Tensor], Optional[Tensor]]:
     r"""
     Args:
         query, key, value: map a query and a set of key-value pairs to an output.
@@ -630,7 +630,6 @@ def my_multi_head_attention_forward(
     if static_k is None:
         k = k.contiguous().view(k.shape[0], bsz * num_heads, head_dim).transpose(0, 1)
     else:
-        # TODO finish disentangling control flow so we don't do in-projections when statics are passed
         assert static_k.size(0) == bsz * num_heads, \
             f"expecting static_k.size(0) of {bsz * num_heads}, but got {static_k.size(0)}"
         assert static_k.size(2) == head_dim, \
@@ -639,7 +638,6 @@ def my_multi_head_attention_forward(
     if static_v is None:
         v = v.contiguous().view(v.shape[0], bsz * num_heads, head_dim).transpose(0, 1)
     else:
-        # TODO finish disentangling control flow so we don't do in-projections when statics are passed
         assert static_v.size(0) == bsz * num_heads, \
             f"expecting static_v.size(0) of {bsz * num_heads}, but got {static_v.size(0)}"
         assert static_v.size(2) == head_dim, \
@@ -692,15 +690,19 @@ def my_multi_head_attention_forward(
     if need_weights:
         # average attention weights over heads
         attn_output_weights = attn_output_weights.view(bsz, num_heads, tgt_len, src_len)
-        return attn_output, attn_output_weights.sum(dim=1) / num_heads
+
+        q = q.permute(1,0,2).view(tgt_len, 1, head_dim * num_heads)
+        k = k.permute(1,0,2).view(tgt_len, 1, head_dim * num_heads)
+        return attn_output, attn_output_weights.sum(dim=1) / num_heads, q, k
+
     else:
+        raise NotImplementedError("this branch is not implemented")
         return attn_output, None
 
 
 
 
 
-# TODO: create a class for self customized self attention: in its forward function, replace F.multi_head_attention_forward with a customized function that returns q and k
 class MyNN_MultiheadAttention(NN_MultiheadAttention):
     def __init__(self, embed_dim, num_heads, dropout=0., bias=True,
                  add_bias_kv=False, add_zero_attn=False,
@@ -722,7 +724,7 @@ class MyNN_MultiheadAttention(NN_MultiheadAttention):
                 key_padding_mask: Optional[Tensor] = None,
                 need_weights: bool = True,
                 attn_mask: Optional[Tensor] = None) -> Tuple[
-        Tensor, Optional[Tensor]]:
+        Tensor, Optional[Tensor], Optional[Tensor], Optional[Tensor]]:
         r"""
     Args:
         query: Query embeddings of shape :math:`(L, N, E_q)` when ``batch_first=False`` or :math:`(N, L, E_q)`
@@ -763,6 +765,7 @@ class MyNN_MultiheadAttention(NN_MultiheadAttention):
             query, key, value = [x.transpose(1, 0) for x in (query, key, value)]
 
         if not self._qkv_same_embed_dim:
+            raise NotImplementedError("this branch is not tested")
             attn_output, attn_output_weights = my_multi_head_attention_forward(
                 query, key, value, self.embed_dim, self.num_heads,
                 self.in_proj_weight, self.in_proj_bias,
@@ -775,8 +778,7 @@ class MyNN_MultiheadAttention(NN_MultiheadAttention):
                 k_proj_weight=self.k_proj_weight,
                 v_proj_weight=self.v_proj_weight)
         else:
-            # TODO: get Q and K from my_multi_head_attention_forward
-            attn_output, attn_output_weights = my_multi_head_attention_forward(
+            attn_output, attn_output_weights, q, k = my_multi_head_attention_forward(
                 query, key, value, self.embed_dim, self.num_heads,
                 self.in_proj_weight, self.in_proj_bias,
                 self.bias_k, self.bias_v, self.add_zero_attn,
@@ -785,6 +787,6 @@ class MyNN_MultiheadAttention(NN_MultiheadAttention):
                 key_padding_mask=key_padding_mask, need_weights=need_weights,
                 attn_mask=attn_mask)
         if self.batch_first:
-            return attn_output.transpose(1, 0), attn_output_weights
+            return attn_output.transpose(1, 0), attn_output_weights, q, k
         else:
-            return attn_output, attn_output_weights
+            return attn_output, attn_output_weights, q, k
