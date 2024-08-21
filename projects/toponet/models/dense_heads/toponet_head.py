@@ -34,9 +34,12 @@ from mmcv.cnn.bricks.registry import TRANSFORMER_LAYER_SEQUENCE
 from projects.toponet.models.modules.sgnn_decoder import SGNNDecoderLayer
 from mmcv.cnn.bricks.registry import TRANSFORMER_LAYER
 
+import warnings
+
 
 @TRANSFORMER_LAYER.register_module()
 class MySGNNDecoderLayer(SGNNDecoderLayer):
+
     def __init__(self,
                  attn_cfgs,
                  ffn_cfgs,
@@ -48,22 +51,160 @@ class MySGNNDecoderLayer(SGNNDecoderLayer):
                          operation_order=operation_order,
                          norm_cfg=norm_cfg, **kwargs)
 
-    # TODO: override forward() to handle Q and K
+    def forward(self,
+                query,
+                key=None,
+                value=None,
+                query_pos=None,
+                key_pos=None,
+                attn_masks=None,
+                query_key_padding_mask=None,
+                key_padding_mask=None,
+                te_query=None,
+                te_cls_scores=None,
+                lclc_adj=None,
+                lcte_adj=None,
+                **kwargs):
+
+        norm_index = 0
+        attn_index = 0
+        ffn_index = 0
+        identity = query
+        if attn_masks is None:
+            attn_masks = [None for _ in range(self.num_attn)]
+        elif isinstance(attn_masks, torch.Tensor):
+            attn_masks = [
+                copy.deepcopy(attn_masks) for _ in range(self.num_attn)
+            ]
+            warnings.warn(f'Use same attn_mask in all attentions in '
+                          f'{self.__class__.__name__} ')
+        else:
+            assert len(attn_masks) == self.num_attn, f'The length of ' \
+                        f'attn_masks {len(attn_masks)} must be equal ' \
+                        f'to the number of attention in ' \
+                        f'operation_order {self.num_attn}'
+
+        # check edge cases that are not implemented (when the nuber of self-attn is not 1)
+        if self.operation_order.count('self_attn') < 1:
+            raise NotImplementedError('decoder layer not implemented when no self-attention exist')
+        elif self.operation_order.count('self_attn') > 1:
+            raise NotImplementedError('decoder layer not implemented when multiple passes of self-attention exist')
+
+        for layer in self.operation_order:
+            if layer == 'self_attn':
+                temp_key = temp_value = query
+                query, decoder_self_attention_q, decoder_self_attention_k = \
+                self.attentions[attn_index](
+                    query,
+                    temp_key,
+                    temp_value,
+                    identity if self.pre_norm else None,
+                    query_pos=query_pos,
+                    key_pos=query_pos,
+                    attn_mask=attn_masks[attn_index],
+                    key_padding_mask=query_key_padding_mask,
+                    **kwargs)
+                attn_index += 1
+                identity = query
+
+            elif layer == 'norm':
+                query = self.norms[norm_index](query)
+                norm_index += 1
+
+            elif layer == 'cross_attn':
+                query = self.attentions[attn_index](
+                    query,
+                    key,
+                    value,
+                    identity if self.pre_norm else None,
+                    query_pos=query_pos,
+                    key_pos=key_pos,
+                    attn_mask=attn_masks[attn_index],
+                    key_padding_mask=key_padding_mask,
+                    **kwargs)
+                attn_index += 1
+                identity = query
+
+            elif layer == 'ffn':
+                query = self.ffns[ffn_index](
+                    query, te_query, lclc_adj, lcte_adj, te_cls_scores, identity=identity if self.pre_norm else None)
+                ffn_index += 1
+
+        return query, decoder_self_attention_q, decoder_self_attention_k
 
 
-# TODO: customize TopoNetSGNNDecoder
 @TRANSFORMER_LAYER_SEQUENCE.register_module()
 class MyTopoNetSGNNDecoder(TopoNetSGNNDecoder):
     def __init__(self, *args, return_intermediate=False, **kwargs):
 
         super().__init__(*args, return_intermediate=return_intermediate, **kwargs)
 
+    def forward(self,
+                query,
+                *args,
+                reference_points=None,
+                lclc_branches=None,
+                lcte_branches=None,
+                key_padding_mask=None,
+                te_feats=None,
+                te_cls_scores=None,
+                **kwargs):
 
-    # TODO: override forward() to handle Q and K
+        output = query
+        intermediate = []
+        intermediate_reference_points = []
+        intermediate_lclc_rel = []
+        intermediate_lcte_rel = []
+        num_query = query.size(0)
+        num_te_query = te_feats.size(2)
+
+        prev_lclc_adj = torch.zeros((query.size(1), num_query, num_query),
+                                  dtype=query.dtype, device=query.device)
+        prev_lcte_adj = torch.zeros((query.size(1), num_query, num_te_query),
+                                  dtype=query.dtype, device=query.device)
+        for lid, layer in enumerate(self.layers):
+            reference_points_input = reference_points[..., :2].unsqueeze(
+                2)  # BS NUM_QUERY NUM_LEVEL 2
+
+            # TODO: use decoder_self_attention_q and decoder_self_attention_k
+            output, decoder_self_attention_q, decoder_self_attention_k = layer(
+                output,
+                *args,
+                reference_points=reference_points_input,
+                key_padding_mask=key_padding_mask,
+                te_query=te_feats[lid],
+                te_cls_scores=te_cls_scores[lid],
+                lclc_adj=prev_lclc_adj,
+                lcte_adj=prev_lcte_adj,
+                **kwargs)
+            output = output.permute(1, 0, 2)
+
+            lclc_rel_out = lclc_branches[lid](output, output)
+            lclc_rel_adj = lclc_rel_out.squeeze(-1).sigmoid()
+            prev_lclc_adj = lclc_rel_adj.detach()
+
+            lcte_rel_out = lcte_branches[lid](output, te_feats[lid])
+            lcte_rel_adj = lcte_rel_out.squeeze(-1).sigmoid()
+            prev_lcte_adj = lcte_rel_adj.detach()
+
+            output = output.permute(1, 0, 2)
+
+            if self.return_intermediate:
+                intermediate.append(output)
+                intermediate_reference_points.append(reference_points)
+                intermediate_lclc_rel.append(lclc_rel_out)
+                intermediate_lcte_rel.append(lcte_rel_out)
+
+        if self.return_intermediate:
+            return torch.stack(intermediate), torch.stack(
+                intermediate_reference_points), torch.stack(
+                intermediate_lclc_rel), torch.stack(
+                intermediate_lcte_rel)
+
+        return output, reference_points, lclc_rel_out, lcte_rel_out
 
 
 
-# TODO: customize TopoNetTransformerDecoderOnly
 @TRANSFORMER.register_module()
 class MyTopoNetTransformerDecoderOnly(TopoNetTransformerDecoderOnly):
 
@@ -79,13 +220,48 @@ class MyTopoNetTransformerDecoderOnly(TopoNetTransformerDecoderOnly):
             **kwargs)
 
 
-    # TODO: override forward() to handle Q and K
+    @auto_fp16(apply_to=(
+    'mlvl_feats', 'bev_queries', 'object_query_embed', 'prev_bev', 'bev_pos'))
+    def forward(self,
+                mlvl_feats,
+                bev_embed,
+                object_query_embed,
+                bev_h,
+                bev_w,
+                lclc_branches=None,
+                lcte_branches=None,
+                te_feats=None,
+                te_cls_scores=None,
+                **kwargs):
+        bs = mlvl_feats[0].size(0)
+        query_pos, query = torch.split(
+            object_query_embed, self.embed_dims, dim=1)
+        query_pos = query_pos.unsqueeze(0).expand(bs, -1, -1)
+        query = query.unsqueeze(0).expand(bs, -1, -1)
+        reference_points = self.reference_points(query_pos)
+        reference_points = reference_points.sigmoid()
+        init_reference_out = reference_points
 
+        query = query.permute(1, 0, 2)
+        query_pos = query_pos.permute(1, 0, 2)
+        bev_embed = bev_embed.permute(1, 0, 2)
+        inter_states, inter_references, inter_lclc_rel, inter_lcte_rel = self.decoder(
+            query=query,
+            key=None,
+            value=bev_embed,
+            query_pos=query_pos,
+            reference_points=reference_points,
+            lclc_branches=lclc_branches,
+            lcte_branches=lcte_branches,
+            te_feats=te_feats,
+            te_cls_scores=te_cls_scores,
+            spatial_shapes=torch.tensor([[bev_h, bev_w]], device=query.device),
+            level_start_index=torch.tensor([0], device=query.device),
+            **kwargs)
 
+        inter_references_out = inter_references
 
-
-
-
+        return inter_states, init_reference_out, inter_references_out, inter_lclc_rel, inter_lcte_rel
 
 
 @HEADS.register_module()
