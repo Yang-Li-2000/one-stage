@@ -133,7 +133,9 @@ class BEVFormerConstructer(BaseModule):
         shift_x = delta_lidar[:, 0] / self.real_w
         shift_y = shift_y * self.use_shift
         shift_x = shift_x * self.use_shift
-        shift = bev_queries.new_tensor([shift_x, shift_y]).permute(1, 0)  # xy, bs -> bs, xy
+
+        # shift = bev_queries.new_tensor([shift_x, shift_y]).permute(1, 0)  # xy, bs -> bs, xy
+        shift = torch.tensor(np.array([shift_x, shift_y]), device=bev_queries.device, dtype=bev_queries.dtype).to(bev_queries.device).permute(1, 0)
 
         if prev_bev is not None:
             if prev_bev.shape[1] == self.bev_h * self.bev_w:
@@ -151,8 +153,10 @@ class BEVFormerConstructer(BaseModule):
                     prev_bev[:, i] = tmp_prev_bev[:, 0]
 
         # add can bus signals
-        can_bus = bev_queries.new_tensor(
-            [each['can_bus'] for each in img_metas])  # [:, :]
+        # can_bus = bev_queries.new_tensor([each['can_bus'] for each in img_metas])  # [:, :]
+        can_bus = torch.tensor(np.array([each['can_bus'] for each in img_metas]), device=bev_queries.device, dtype=bev_queries.dtype)
+
+
         can_bus = self.can_bus_mlp(can_bus)[None, :, :]
         bev_queries = bev_queries + can_bus * self.use_can_bus
 
