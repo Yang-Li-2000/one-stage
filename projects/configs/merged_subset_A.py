@@ -43,7 +43,7 @@ bev_h_ = 100
 bev_w_ = 200
 
 model = dict(
-    type='TopoNet',
+    type='MergedTopoNet',
     img_backbone=dict(
         type='ResNet',
         depth=50,
