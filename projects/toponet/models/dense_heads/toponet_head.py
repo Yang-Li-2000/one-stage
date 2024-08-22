@@ -126,6 +126,7 @@ class MySGNNDecoderLayer(SGNNDecoderLayer):
                 identity = query
 
             elif layer == 'ffn':
+                # FFN_SGNN: linear layers + gnn layers
                 query = self.ffns[ffn_index](
                     query, te_query, lclc_adj, lcte_adj, te_cls_scores, identity=identity if self.pre_norm else None)
                 ffn_index += 1

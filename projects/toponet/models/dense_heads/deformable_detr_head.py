@@ -160,6 +160,7 @@ class MyDetrTransformerDecoderLayer(DetrTransformerDecoderLayer):
                 identity = query
 
             elif layer == 'ffn':
+                # linear layers: 256 --> 512 --> 256 with ReLU and dropout
                 query = self.ffns[ffn_index](
                     query, identity if self.pre_norm else None)
                 ffn_index += 1
