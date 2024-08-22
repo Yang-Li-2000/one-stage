@@ -155,7 +155,10 @@ class TopoNet(MVXTwoStageDetector):
 
         te_losses = {}
         bbox_outs = self.bbox_head(front_view_img_feats, bbox_img_metas)
+
+        # dense_heads.deformable_detr_head.CustomDeformableDETRHead
         bbox_losses, te_assign_result = self.bbox_head.loss(bbox_outs, gt_bboxes, gt_labels, bbox_img_metas, gt_bboxes_ignore)
+
         te_feats = bbox_outs['history_states']
         te_cls_scores = bbox_outs['all_cls_scores']
 
@@ -168,7 +171,11 @@ class TopoNet(MVXTwoStageDetector):
                 te_losses[loss] *= 0
 
         losses = dict()
+
+        # modules.bevformer_constructer.BEVFormerConstructer
         bev_feats = self.bev_constructor(img_feats, img_metas, prev_bev)
+
+        # dense_heads.toponet_head.TopoNetHead
         outs = self.pts_bbox_head(img_feats, bev_feats, img_metas, te_feats, te_cls_scores)
         loss_inputs = [outs, gt_lanes_3d, gt_lane_labels_3d, gt_lane_adj, gt_lane_lcte_adj, te_assign_result]
         lane_losses = self.pts_bbox_head.loss(*loss_inputs, img_metas=img_metas)
