@@ -158,9 +158,9 @@ class MergedTopoNet(MVXTwoStageDetector):
             img_meta['batch_input_shape'] = batch_input_shape
 
         te_losses = {}
-        bbox_outs = self.bbox_head(front_view_img_feats, bbox_img_metas)
 
         # dense_heads.deformable_detr_head.CustomDeformableDETRHead
+        bbox_outs = self.bbox_head(front_view_img_feats, bbox_img_metas)
         bbox_losses, te_assign_result = self.bbox_head.loss(bbox_outs,
                                                             gt_bboxes,
                                                             gt_labels,
