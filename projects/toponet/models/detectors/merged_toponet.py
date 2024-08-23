@@ -163,140 +163,58 @@ class MergedTopoNet(MVXTwoStageDetector):
                     crop_shape=img_meta['crop_shape'][0]))
             img_meta['batch_input_shape'] = batch_input_shape
 
-        te_losses = {}
-
-
-
-
-
-
         # # dense_heads.deformable_detr_head.CustomDeformableDETRHead
         # bbox_outs = self.bbox_head(front_view_img_feats, bbox_img_metas)
         # # dense_heads.toponet_head.TopoNetHead: (gnn in ffn uses te_feature)
         # outs = self.pts_bbox_head(img_feats, bev_feats, img_metas, None, None)
 
-        # firstly, go through the first half
+
+        # 1. prepare inputs
+        te_feats = None
+        te_cls_scores = None
+        bev_feats = self.bev_constructor(img_feats, img_metas, prev_bev)
 
 
-        # TODO: manually perform the decoder forward functions of both branches
-
-
-
-        # TODO: test second half using original toponet code. if successful, add egtr
-        ########################################################################
+        # 2. go through the first half
         outputs_te_head_first_half = self.bbox_head.forward_first_half(front_view_img_feats, bbox_img_metas)
         outputs_te_transformer_first_half = self.bbox_head.transformer.forward_first_half(*outputs_te_head_first_half)
+        outputs_cl_head_first_half = self.pts_bbox_head.forward_first_half(img_feats, bev_feats, img_metas, te_feats, te_cls_scores)
+        outputs_cl_transformer_first_half = self.pts_bbox_head.transformer.forward_first_half(*outputs_cl_head_first_half)
 
-        # inter_states, inter_references
-        outputs_te_decoder = self.bbox_head.transformer.decoder(
-            query=outputs_te_transformer_first_half['query'],
-            key=None,
-            value=outputs_te_transformer_first_half['memory'],
-            query_pos=outputs_te_transformer_first_half['query_pos'],
-            key_padding_mask=outputs_te_transformer_first_half['mask_flatten'],
-            reference_points=outputs_te_transformer_first_half['reference_points'],
-            spatial_shapes=outputs_te_transformer_first_half['spatial_shapes'],
-            level_start_index=outputs_te_transformer_first_half['level_start_index'],
-            valid_ratios=outputs_te_transformer_first_half['valid_ratios'],
-            reg_branches=outputs_te_transformer_first_half['reg_branches'],
-            **outputs_te_transformer_first_half['kwargs'])
 
-        # inter_states, init_reference_out, inter_references_out, None, None
-        # Equivalently: hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord
+        # 3. TODO: manually go through decoders
+
+
+
+
+
+
+
+        # 4. go through the second half
         outputs_te_transformer_second_half = self.bbox_head.transformer.forward_second_half(*outputs_te_decoder, outputs_te_transformer_first_half['init_reference_out'])
-        # bbox_outs
         bbox_outs = self.bbox_head.forward_second_half(*outputs_te_transformer_second_half)
-        ########################################################################
+        outputs_cl_transformer_last_half = self.pts_bbox_head.transformer.forward_second_half(*outputs_cl_decoder, outputs_cl_transformer_first_half['init_reference_out'])
+        outs = self.pts_bbox_head.forward_second_half(outputs_cl_transformer_last_half)
 
 
-
-        bbox_losses, te_assign_result = self.bbox_head.loss(bbox_outs,
-                                                            gt_bboxes,
-                                                            gt_labels,
-                                                            bbox_img_metas,
-                                                            gt_bboxes_ignore)
-
-        te_feats = bbox_outs['history_states']
-        te_cls_scores = bbox_outs['all_cls_scores']
-
+        # 5. TODO: loss computaiton
+        te_losses = {}
+        bbox_losses, te_assign_result = self.bbox_head.loss(bbox_outs, gt_bboxes, gt_labels, bbox_img_metas, gt_bboxes_ignore)
         for loss in bbox_losses:
             te_losses['bbox_head.' + loss] = bbox_losses[loss]
-
         num_gt_bboxes = sum([len(gt) for gt in gt_labels])
         if num_gt_bboxes == 0:
             for loss in te_losses:
                 te_losses[loss] *= 0
 
         losses = dict()
-
-        # modules.bevformer_constructer.BEVFormerConstructer
-        bev_feats = self.bev_constructor(img_feats, img_metas, prev_bev)
-
-
-        ########################################################################
-        outputs_cl_head_first_half = self.pts_bbox_head.forward_first_half(img_feats, bev_feats, img_metas, te_feats, te_cls_scores)
-        outputs_cl_transformer_first_half = self.pts_bbox_head.transformer.forward_first_half(*outputs_cl_head_first_half)
-
-        # inter_states, inter_references, inter_lclc_rel, inter_lcte_rel
-        outputs_cl_decoder = self.pts_bbox_head.transformer.decoder(
-            query=outputs_cl_transformer_first_half['query'],
-            key=outputs_cl_transformer_first_half['key'],
-            value=outputs_cl_transformer_first_half['value'],
-            query_pos=outputs_cl_transformer_first_half['query_pos'],
-            reference_points=outputs_cl_transformer_first_half['reference_points'],
-            lclc_branches=outputs_cl_transformer_first_half['lclc_branches'],
-            lcte_branches=outputs_cl_transformer_first_half['lcte_branches'],
-            te_feats=outputs_cl_transformer_first_half['te_feats'],
-            te_cls_scores=outputs_cl_transformer_first_half['te_cls_scores'],
-            spatial_shapes=outputs_cl_transformer_first_half['spatial_shapes'],
-            level_start_index=outputs_cl_transformer_first_half['level_start_index'],
-            img_metas=outputs_cl_transformer_first_half['img_metas'],
-            init_reference_out=outputs_cl_transformer_first_half['init_reference_out']
-        )
-
-        outputs_cl_transformer_last_half = self.pts_bbox_head.transformer.forward_second_half(*outputs_cl_decoder, outputs_cl_transformer_first_half['init_reference_out'])
-        outs = self.pts_bbox_head.forward_second_half(outputs_cl_transformer_last_half)
-        ########################################################################
-
-        loss_inputs = [outs, gt_lanes_3d, gt_lane_labels_3d, gt_lane_adj,
-                       gt_lane_lcte_adj, te_assign_result]
+        loss_inputs = [outs, gt_lanes_3d, gt_lane_labels_3d, gt_lane_adj, gt_lane_lcte_adj, te_assign_result]
         lane_losses = self.pts_bbox_head.loss(*loss_inputs, img_metas=img_metas)
         for loss in lane_losses:
             losses['lane_head.' + loss] = lane_losses[loss]
 
         losses.update(te_losses)
 
-
-
-
-
-
-        # TODO: customized loss computation
-        # te_feats = bbox_outs['history_states']
-        # te_cls_scores = bbox_outs['all_cls_scores']
-
-        # bbox_losses, te_assign_result = self.bbox_head.loss(bbox_outs,
-        #                                                     gt_bboxes,
-        #                                                     gt_labels,
-        #                                                     bbox_img_metas,
-        #                                                     gt_bboxes_ignore)
-        #
-        # for loss in bbox_losses:
-        #     te_losses['bbox_head.' + loss] = bbox_losses[loss]
-        #
-        # num_gt_bboxes = sum([len(gt) for gt in gt_labels])
-        # if num_gt_bboxes == 0:
-        #     for loss in te_losses:
-        #         te_losses[loss] *= 0
-        #
-        #
-        # loss_inputs = [outs, gt_lanes_3d, gt_lane_labels_3d, gt_lane_adj,
-        #                gt_lane_lcte_adj, te_assign_result]
-        # lane_losses = self.pts_bbox_head.loss(*loss_inputs, img_metas=img_metas)
-        # for loss in lane_losses:
-        #     losses['lane_head.' + loss] = lane_losses[loss]
-        #
-        # losses.update(te_losses)
 
         return losses
 
