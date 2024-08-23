@@ -106,6 +106,7 @@ class MySGNNDecoderLayer(SGNNDecoderLayer):
                     **kwargs)
                 attn_index += 1
                 identity = query
+                # TODO
 
             elif layer == 'norm':
                 query = self.norms[norm_index](query)
@@ -131,7 +132,7 @@ class MySGNNDecoderLayer(SGNNDecoderLayer):
                     query, te_query, lclc_adj, lcte_adj, te_cls_scores, identity=identity if self.pre_norm else None)
                 ffn_index += 1
 
-        return query, decoder_self_attention_q, decoder_self_attention_k
+        return query
 
 
 @TRANSFORMER_LAYER_SEQUENCE.register_module()
@@ -168,7 +169,7 @@ class MyTopoNetSGNNDecoder(TopoNetSGNNDecoder):
                 2)  # BS NUM_QUERY NUM_LEVEL 2
 
             # TODO: use decoder_self_attention_q and decoder_self_attention_k
-            output, decoder_self_attention_q, decoder_self_attention_k = layer(
+            output = layer(
                 output,
                 *args,
                 reference_points=reference_points_input,
@@ -219,6 +220,86 @@ class MyTopoNetTransformerDecoderOnly(TopoNetTransformerDecoderOnly):
             embed_dims=embed_dims,
             pts_dim=pts_dim,
             **kwargs)
+
+    @auto_fp16(apply_to=(
+            'mlvl_feats', 'bev_queries', 'object_query_embed', 'prev_bev',
+            'bev_pos'))
+    def forward_first_half(self,
+                           mlvl_feats,
+                           bev_embed,
+                           object_query_embed,
+                           bev_h,
+                           bev_w,
+                           lclc_branches,
+                           lcte_branches,
+                           te_feats,
+                           te_cls_scores,
+                           img_metas):
+        bs = mlvl_feats[0].size(0)
+        query_pos, query = torch.split(
+            object_query_embed, self.embed_dims, dim=1)
+        query_pos = query_pos.unsqueeze(0).expand(bs, -1, -1)
+        query = query.unsqueeze(0).expand(bs, -1, -1)
+        reference_points = self.reference_points(query_pos)
+        reference_points = reference_points.sigmoid()
+        init_reference_out = reference_points
+
+        query = query.permute(1, 0, 2)
+        query_pos = query_pos.permute(1, 0, 2)
+        bev_embed = bev_embed.permute(1, 0, 2)
+
+
+        # return variables
+        query = query
+        key = None
+        value = bev_embed
+        query_pos = query_pos
+        reference_points = reference_points
+        lclc_branches = lclc_branches
+        lcte_branches = lcte_branches
+        te_feats = te_feats
+        te_cls_scores = te_cls_scores
+        spatial_shapes = torch.tensor([[bev_h, bev_w]], device=query.device)
+        level_start_index = torch.tensor([0], device=query.device)
+
+        output_dict = {"query": query,
+                       "key": key,
+                       "value": value,
+                       "query_pos": query_pos,
+                       "reference_points": reference_points,
+                       "lclc_branches": lclc_branches,
+                       "lcte_branches": lcte_branches,
+                       "te_feats": te_feats,
+                       "te_cls_scores": te_cls_scores,
+                       "spatial_shapes": spatial_shapes,
+                       "level_start_index": level_start_index,
+                       "img_metas": img_metas,
+                       "init_reference_out": init_reference_out}
+
+
+
+        # TODO: note that kwargs is replaced with img_metas
+        # return query, key, value, query_pos, reference_points, lclc_branches, lcte_branches, te_feats, te_cls_scores, spatial_shapes, level_start_index, img_metas, init_reference_out
+        return output_dict
+
+
+
+    @auto_fp16(apply_to=(
+            'mlvl_feats', 'bev_queries', 'object_query_embed', 'prev_bev',
+            'bev_pos'))
+    def forward_second_half(self, inter_states, inter_references, inter_lclc_rel, inter_lcte_rel, init_reference_out):
+
+        inter_references_out = inter_references
+
+        # output_dict = {"inter_states": inter_states,
+        #                "init_reference_out": init_reference_out,
+        #                "inter_references_out": inter_references_out,
+        #                "inter_lclc_rel": inter_lclc_rel,
+        #                "inter_lcte_rel": inter_lcte_rel}
+
+        return inter_states, init_reference_out, inter_references_out, inter_lclc_rel, inter_lcte_rel
+        # return output_dict
+
 
 
     @auto_fp16(apply_to=(
@@ -418,6 +499,75 @@ class TopoNetHead(AnchorFreeHead):
             bias_init = bias_init_with_prob(0.01)
             for m in self.cls_branches:
                 nn.init.constant_(m[-1].bias, bias_init)
+
+    @auto_fp16(apply_to=('mlvl_feats'))
+    def forward_first_half(self, mlvl_feats, bev_feats, img_metas, te_feats, te_cls_scores):
+        dtype = mlvl_feats[0].dtype
+        object_query_embeds = self.query_embedding.weight.to(dtype)
+
+        if te_feats is not None:
+            te_feats = torch.stack([self.te_embed_branches[lid](te_feats[lid]) for lid in range(len(te_feats))])
+
+        # return variables
+        bev_h = self.bev_h
+        bev_w = self.bev_w
+        lclc_branches = self.lclc_branches
+        lcte_branches = self.lcte_branches
+        te_feats = te_feats
+        te_cls_scores = te_cls_scores
+        img_metas = img_metas
+        return mlvl_feats, bev_feats, object_query_embeds, bev_h, bev_w, lclc_branches, lcte_branches, te_feats, te_cls_scores, img_metas
+
+    @auto_fp16(apply_to=('mlvl_feats'))
+    def forward_second_half(self, outputs):
+
+        hs, init_reference, inter_references, lclc_rel_out, lcte_rel_out = outputs
+        hs = hs.permute(0, 2, 1, 3)
+        outputs_classes = []
+        outputs_coords = []
+        for lvl in range(hs.shape[0]):
+            if lvl == 0:
+                reference = init_reference
+            else:
+                reference = inter_references[lvl - 1]
+            reference = inverse_sigmoid(reference)
+            outputs_class = self.cls_branches[lvl](hs[lvl])
+            tmp = self.reg_branches[lvl](hs[lvl])
+
+            assert reference.shape[-1] == self.pts_dim
+
+            bs, num_query, _ = tmp.shape
+            tmp = tmp.view(bs, num_query, -1, self.pts_dim)
+            tmp = tmp + reference.unsqueeze(2)
+            tmp = tmp.sigmoid()
+
+            coord = tmp.clone()
+            coord[..., 0] = coord[..., 0] * (
+                        self.pc_range[3] - self.pc_range[0]) + self.pc_range[0]
+            coord[..., 1] = coord[..., 1] * (
+                        self.pc_range[4] - self.pc_range[1]) + self.pc_range[1]
+            if self.pts_dim == 3:
+                coord[..., 2] = coord[..., 2] * (
+                            self.pc_range[5] - self.pc_range[2]) + \
+                                self.pc_range[2]
+            outputs_coord = coord.view(bs, num_query, -1).contiguous()
+
+            outputs_classes.append(outputs_class)
+            outputs_coords.append(outputs_coord)
+
+        outputs_classes = torch.stack(outputs_classes)
+        outputs_coords = torch.stack(outputs_coords)
+
+        outs = {
+            'all_cls_scores': outputs_classes,
+            'all_lanes_preds': outputs_coords,
+            'all_lclc_preds': lclc_rel_out,
+            'all_lcte_preds': lcte_rel_out,
+            'history_states': hs
+        }
+
+        return outs
+
 
     @auto_fp16(apply_to=('mlvl_feats'))
     def forward(self, mlvl_feats, bev_feats, img_metas, te_feats, te_cls_scores):

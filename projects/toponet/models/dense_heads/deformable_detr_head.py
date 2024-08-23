@@ -59,6 +59,59 @@ class MyDetrTransformerDecoderLayer(DetrTransformerDecoderLayer):
             **kwargs
         )
 
+    # def forward_self_attention(self,
+    #                            query_te,
+    #                            query_cl,
+    #                            query_pos=None,
+    #                            attn_masks=None,
+    #                            query_key_padding_mask=None,
+    #                            **kwargs):
+    #
+    #     if attn_masks is not None or query_key_padding_mask is not None:
+    #         raise NotImplementedError()
+    #
+    #
+    #     query = torch.cat((query_te, query_cl), dim=0) # TODO: check dim
+    #
+    #
+    #     identity = query
+    #
+    #     if attn_masks is None:
+    #         attn_masks = [None for _ in range(self.num_attn)]
+    #     elif isinstance(attn_masks, torch.Tensor):
+    #         attn_masks = [
+    #             copy.deepcopy(attn_masks) for _ in range(self.num_attn)
+    #         ]
+    #         warnings.warn(f'Use same attn_mask in all attentions in '
+    #                       f'{self.__class__.__name__} ')
+    #     else:
+    #         assert len(attn_masks) == self.num_attn, f'The length of ' \
+    #                                                  f'attn_masks {len(attn_masks)} must be equal ' \
+    #                                                  f'to the number of attention in ' \
+    #                                                  f'operation_order {self.num_attn}'
+    #
+    #     attn_index = 0
+    #     temp_key = temp_value = query
+    #
+    #     query, decoder_self_attention_q, decoder_self_attention_k = \
+    #         self.attentions[attn_index](
+    #             query,
+    #             temp_key,
+    #             temp_value,
+    #             identity if self.pre_norm else None,
+    #             query_pos=query_pos,
+    #             key_pos=query_pos,
+    #             attn_mask=attn_masks[attn_index],
+    #             key_padding_mask=query_key_padding_mask,
+    #             **kwargs)
+    #
+    #
+    #     # TODO: split and return
+    #     return
+
+
+
+
     def forward(self,
                 query,
                 key=None,
@@ -140,6 +193,7 @@ class MyDetrTransformerDecoderLayer(DetrTransformerDecoderLayer):
                     **kwargs)
                 attn_index += 1
                 identity = query
+                # TODO
 
             elif layer == 'norm':
                 query = self.norms[norm_index](query)
@@ -165,7 +219,7 @@ class MyDetrTransformerDecoderLayer(DetrTransformerDecoderLayer):
                     query, identity if self.pre_norm else None)
                 ffn_index += 1
 
-        return query, decoder_self_attention_q, decoder_self_attention_k
+        return query
 
 
 @TRANSFORMER_LAYER_SEQUENCE.register_module()
@@ -216,7 +270,7 @@ class MyDeformableDetrTransformerDecoder(DeformableDetrTransformerDecoder):
                     valid_ratios[:, None]
 
             # TODO: use decoder_self_attention_q and decoder_self_attention_k
-            output, decoder_self_attention_q, decoder_self_attention_k = layer(
+            output = layer(
                 output,
                 *args,
                 reference_points=reference_points_input,
@@ -267,6 +321,104 @@ class MyDeformableDetrTransformer(DeformableDetrTransformer):
             two_stage_num_proposals=two_stage_num_proposals,
             **kwargs
         )
+
+    def forward_first_half(self,
+                mlvl_feats,
+                mlvl_masks,
+                query_embed,
+                mlvl_pos_embeds,
+                reg_branches,
+                cls_branches,
+                **kwargs):
+
+        assert self.as_two_stage or query_embed is not None
+
+        feat_flatten = []
+        mask_flatten = []
+        lvl_pos_embed_flatten = []
+        spatial_shapes = []
+        for lvl, (feat, mask, pos_embed) in enumerate(
+                zip(mlvl_feats, mlvl_masks, mlvl_pos_embeds)):
+            bs, c, h, w = feat.shape
+            spatial_shape = (h, w)
+            spatial_shapes.append(spatial_shape)
+            feat = feat.flatten(2).transpose(1, 2)
+            mask = mask.flatten(1)
+            pos_embed = pos_embed.flatten(2).transpose(1, 2)
+            lvl_pos_embed = pos_embed + self.level_embeds[lvl].view(1, 1, -1)
+            lvl_pos_embed_flatten.append(lvl_pos_embed)
+            feat_flatten.append(feat)
+            mask_flatten.append(mask)
+        feat_flatten = torch.cat(feat_flatten, 1)
+        mask_flatten = torch.cat(mask_flatten, 1)
+        lvl_pos_embed_flatten = torch.cat(lvl_pos_embed_flatten, 1)
+        spatial_shapes = torch.as_tensor(
+            spatial_shapes, dtype=torch.long, device=feat_flatten.device)
+        level_start_index = torch.cat((spatial_shapes.new_zeros(
+            (1,)), spatial_shapes.prod(1).cumsum(0)[:-1]))
+        valid_ratios = torch.stack(
+            [self.get_valid_ratio(m) for m in mlvl_masks], 1)
+
+        reference_points = \
+            self.get_reference_points(spatial_shapes,
+                                      valid_ratios,
+                                      device=feat.device)
+
+        feat_flatten = feat_flatten.permute(1, 0, 2)  # (H*W, bs, embed_dims)
+        lvl_pos_embed_flatten = lvl_pos_embed_flatten.permute(
+            1, 0, 2)  # (H*W, bs, embed_dims)
+        memory = self.encoder(
+            query=feat_flatten,
+            key=None,
+            value=None,
+            query_pos=lvl_pos_embed_flatten,
+            query_key_padding_mask=mask_flatten,
+            spatial_shapes=spatial_shapes,
+            reference_points=reference_points,
+            level_start_index=level_start_index,
+            valid_ratios=valid_ratios,
+            **kwargs)
+
+        memory = memory.permute(1, 0, 2)
+        bs, _, c = memory.shape
+        if self.as_two_stage:
+            raise NotImplementedError()
+        else:
+            query_pos, query = torch.split(query_embed, c, dim=1)
+            query_pos = query_pos.unsqueeze(0).expand(bs, -1, -1)
+            query = query.unsqueeze(0).expand(bs, -1, -1)
+            reference_points = self.reference_points(query_pos).sigmoid()
+            init_reference_out = reference_points
+
+        # decoder
+        query = query.permute(1, 0, 2)
+        memory = memory.permute(1, 0, 2)
+        query_pos = query_pos.permute(1, 0, 2)
+
+
+        output_dict = {"query": query,
+                       "memory": memory,
+                       "query_pos": query_pos,
+                       "init_reference_out": init_reference_out,
+                       "mask_flatten": mask_flatten,
+                       "reference_points": reference_points,
+                       "spatial_shapes": spatial_shapes,
+                       "level_start_index": level_start_index,
+                       "valid_ratios": valid_ratios,
+                       "reg_branches": reg_branches,
+                       "kwargs": kwargs}
+
+        # return query, memory, query_pos, init_reference_out
+        return output_dict
+
+
+    def forward_second_half(self, inter_states, inter_references, init_reference_out):
+
+        inter_references_out = inter_references
+        if self.as_two_stage:
+            raise NotImplementedError()
+        return inter_states, init_reference_out, \
+            inter_references_out, None, None
 
 
     def forward(self,
@@ -524,6 +676,75 @@ class CustomDeformableDETRHead(DETRHead):
         if self.as_two_stage:
             for m in self.reg_branches:
                 nn.init.constant_(m[-1].bias.data[2:], 0.0)
+
+
+    def forward_first_half(self, mlvl_feats, img_metas):
+
+        batch_size = mlvl_feats[0].size(0)
+        input_img_h, input_img_w = img_metas[0]['batch_input_shape']
+        img_masks = mlvl_feats[0].new_ones(
+            (batch_size, input_img_h, input_img_w))
+        for img_id in range(batch_size):
+            img_h, img_w, _ = img_metas[img_id]['img_shape']
+            img_masks[img_id, :img_h, :img_w] = 0
+
+        mlvl_masks = []
+        mlvl_positional_encodings = []
+        for feat in mlvl_feats:
+            mlvl_masks.append(
+                F.interpolate(img_masks[None],
+                              size=feat.shape[-2:]).to(torch.bool).squeeze(0))
+            mlvl_positional_encodings.append(
+                self.positional_encoding(mlvl_masks[-1]))
+
+        query_embeds = None
+        if not self.as_two_stage:
+            query_embeds = self.query_embedding.weight
+
+        # return inputs for self.transformer
+        reg_branches = self.reg_branches if self.with_box_refine else None  # noqa:E501
+        cls_branches = self.cls_branches if self.as_two_stage else None
+
+        return mlvl_feats, mlvl_masks, query_embeds, mlvl_positional_encodings, reg_branches, cls_branches
+
+
+
+    def forward_second_half(self, hs, init_reference, inter_references, enc_outputs_class, enc_outputs_coord):
+
+        hs = hs.permute(0, 2, 1, 3)
+        outputs_classes = []
+        outputs_coords = []
+
+        for lvl in range(hs.shape[0]):
+            if lvl == 0:
+                reference = init_reference
+            else:
+                reference = inter_references[lvl - 1]
+            reference = inverse_sigmoid(reference)
+            outputs_class = self.cls_branches[lvl](hs[lvl])
+            tmp = self.reg_branches[lvl](hs[lvl])
+            if reference.shape[-1] == 4:
+                tmp += reference
+            else:
+                assert reference.shape[-1] == 2
+                tmp[..., :2] += reference
+            outputs_coord = tmp.sigmoid()
+            outputs_classes.append(outputs_class)
+            outputs_coords.append(outputs_coord)
+
+        outputs_classes = torch.stack(outputs_classes)
+        outputs_coords = torch.stack(outputs_coords)
+
+        outs = {
+            'all_cls_scores': outputs_classes,
+            'all_bbox_preds': outputs_coords,
+            'enc_cls_scores': enc_outputs_class if self.as_two_stage else None,
+            'enc_bbox_preds': enc_outputs_coord.sigmoid() if self.as_two_stage else None,
+            'history_states': hs
+        }
+
+        return outs
+
 
     def forward(self, mlvl_feats, img_metas):
         """Forward function.
