@@ -182,7 +182,8 @@ class MergedTopoNet(MVXTwoStageDetector):
         )
 
         # 3. manually go through decoders
-        num_decoder_layers = 6 # TODO: replace hard-coded value
+        num_decoder_layers = len(self.bbox_head.transformer.decoder.layers)
+        assert len(self.bbox_head.transformer.decoder.layers) == len(self.pts_bbox_head.transformer.decoder.layers)
 
         # for te decoder
         query_te = outputs_te_transformer_first_half['query']
