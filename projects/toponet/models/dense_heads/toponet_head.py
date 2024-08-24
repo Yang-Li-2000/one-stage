@@ -51,6 +51,75 @@ class MySGNNDecoderLayer(SGNNDecoderLayer):
                          operation_order=operation_order,
                          norm_cfg=norm_cfg, **kwargs)
 
+    def forward_remaining(self,
+                query,
+                key=None,
+                value=None,
+                query_pos=None,
+                key_pos=None,
+                attn_masks=None,
+                query_key_padding_mask=None,
+                key_padding_mask=None,
+                **kwargs):
+
+        norm_index = 0
+        attn_index = 1
+        ffn_index = 0
+        identity = query
+        if attn_masks is None:
+            attn_masks = [None for _ in range(self.num_attn)]
+        elif isinstance(attn_masks, torch.Tensor):
+            attn_masks = [
+                copy.deepcopy(attn_masks) for _ in range(self.num_attn)
+            ]
+            warnings.warn(f'Use same attn_mask in all attentions in '
+                          f'{self.__class__.__name__} ')
+        else:
+            assert len(attn_masks) == self.num_attn, f'The length of ' \
+                                                     f'attn_masks {len(attn_masks)} must be equal ' \
+                                                     f'to the number of attention in ' \
+                                                     f'operation_order {self.num_attn}'
+
+        # check edge cases that are not implemented (when the nuber of self-attn is not 1)
+        if self.operation_order.count('self_attn') < 1:
+            raise NotImplementedError(
+                'decoder layer not implemented when no self-attention exist')
+        elif self.operation_order.count('self_attn') > 1:
+            raise NotImplementedError(
+                'decoder layer not implemented when multiple passes of self-attention exist')
+
+        for layer in self.operation_order:
+            if layer == 'self_attn':
+               pass
+
+            elif layer == 'norm':
+                query = self.norms[norm_index](query)
+                norm_index += 1
+
+            elif layer == 'cross_attn':
+                query = self.attentions[attn_index](
+                    query,
+                    key,
+                    value,
+                    identity if self.pre_norm else None,
+                    query_pos=query_pos,
+                    key_pos=key_pos,
+                    attn_mask=attn_masks[attn_index],
+                    key_padding_mask=key_padding_mask,
+                    **kwargs)
+                attn_index += 1
+                identity = query
+
+            elif layer == 'ffn':
+                # FFN_SGNN: linear layers + gnn layers
+                query = self.ffns[ffn_index](
+                    query, identity=identity if self.pre_norm else None)
+                ffn_index += 1
+
+        return query
+
+
+
     def forward(self,
                 query,
                 key=None,
@@ -230,11 +299,11 @@ class MyTopoNetTransformerDecoderOnly(TopoNetTransformerDecoderOnly):
                            object_query_embed,
                            bev_h,
                            bev_w,
-                           lclc_branches,
-                           lcte_branches,
-                           te_feats,
-                           te_cls_scores,
-                           img_metas):
+                           lclc_branches=None,
+                           lcte_branches=None,
+                           te_feats=None,
+                           te_cls_scores=None,
+                           **kwargs):
         bs = mlvl_feats[0].size(0)
         query_pos, query = torch.split(
             object_query_embed, self.embed_dims, dim=1)
@@ -273,8 +342,8 @@ class MyTopoNetTransformerDecoderOnly(TopoNetTransformerDecoderOnly):
                        "te_cls_scores": te_cls_scores,
                        "spatial_shapes": spatial_shapes,
                        "level_start_index": level_start_index,
-                       "img_metas": img_metas,
-                       "init_reference_out": init_reference_out}
+                       "init_reference_out": init_reference_out,
+                       "kwargs": kwargs}
 
 
 
@@ -287,19 +356,11 @@ class MyTopoNetTransformerDecoderOnly(TopoNetTransformerDecoderOnly):
     @auto_fp16(apply_to=(
             'mlvl_feats', 'bev_queries', 'object_query_embed', 'prev_bev',
             'bev_pos'))
-    def forward_second_half(self, inter_states, inter_references, inter_lclc_rel, inter_lcte_rel, init_reference_out):
+    def forward_second_half(self, inter_states, inter_references, init_reference_out):
 
         inter_references_out = inter_references
 
-        # output_dict = {"inter_states": inter_states,
-        #                "init_reference_out": init_reference_out,
-        #                "inter_references_out": inter_references_out,
-        #                "inter_lclc_rel": inter_lclc_rel,
-        #                "inter_lcte_rel": inter_lcte_rel}
-
-        return inter_states, init_reference_out, inter_references_out, inter_lclc_rel, inter_lcte_rel
-        # return output_dict
-
+        return inter_states, init_reference_out, inter_references_out
 
 
     @auto_fp16(apply_to=(
@@ -515,13 +576,26 @@ class TopoNetHead(AnchorFreeHead):
         lcte_branches = self.lcte_branches
         te_feats = te_feats
         te_cls_scores = te_cls_scores
-        img_metas = img_metas
-        return mlvl_feats, bev_feats, object_query_embeds, bev_h, bev_w, lclc_branches, lcte_branches, te_feats, te_cls_scores, img_metas
+
+        output_dict = {
+            "mlvl_feats": mlvl_feats,
+            "bev_feats": bev_feats,
+            "object_query_embeds": object_query_embeds,
+            "bev_h": bev_h,
+            "bev_w": bev_w,
+            "lclc_branches": lclc_branches,
+            "lcte_branches": lcte_branches,
+            "te_feats": te_feats,
+            "te_cls_scores": te_cls_scores,
+            "img_metas":img_metas
+        }
+
+        return output_dict
 
     @auto_fp16(apply_to=('mlvl_feats'))
     def forward_second_half(self, outputs):
 
-        hs, init_reference, inter_references, lclc_rel_out, lcte_rel_out = outputs
+        hs, init_reference, inter_references = outputs
         hs = hs.permute(0, 2, 1, 3)
         outputs_classes = []
         outputs_coords = []
@@ -561,8 +635,6 @@ class TopoNetHead(AnchorFreeHead):
         outs = {
             'all_cls_scores': outputs_classes,
             'all_lanes_preds': outputs_coords,
-            'all_lclc_preds': lclc_rel_out,
-            'all_lcte_preds': lcte_rel_out,
             'history_states': hs
         }
 
@@ -633,6 +705,56 @@ class TopoNetHead(AnchorFreeHead):
 
         return outs
 
+    def _my_get_target_single(self,
+                           cls_score,
+                           lanes_pred,
+                           gt_labels,
+                           gt_lanes,
+                           gt_bboxes_ignore=None):
+
+        num_bboxes = lanes_pred.size(0)
+        # assigner and sampler
+
+        assign_result = self.assigner.assign(lanes_pred, cls_score, gt_lanes,
+                                             gt_labels, gt_bboxes_ignore)
+
+        sampling_result = self.sampler.sample(assign_result, lanes_pred,
+                                              gt_lanes)
+
+        pos_inds = sampling_result.pos_inds
+        neg_inds = sampling_result.neg_inds
+        pos_assigned_gt_inds = sampling_result.pos_assigned_gt_inds
+
+        labels = gt_lanes.new_full((num_bboxes,), self.num_classes,
+                                   dtype=torch.long)
+        labels[pos_inds] = gt_labels[
+            sampling_result.pos_assigned_gt_inds].long()
+        label_weights = gt_lanes.new_ones(num_bboxes)
+
+        # bbox targets
+        gt_c = gt_lanes.shape[-1]
+        if gt_c == 0:
+            gt_c = self.gt_c_save
+            sampling_result.pos_gt_bboxes = torch.zeros((0, gt_c)).to(
+                sampling_result.pos_gt_bboxes.device)
+        else:
+            self.gt_c_save = gt_c
+
+        bbox_targets = torch.zeros_like(lanes_pred)[..., :gt_c]
+        bbox_weights = torch.zeros_like(lanes_pred)
+        bbox_weights[pos_inds] = 1.0
+        # DETR
+
+        bbox_targets[pos_inds] = sampling_result.pos_gt_bboxes
+
+
+        xs = pos_inds.unsqueeze(-1).repeat(1, pos_inds.size(0))
+        ys = pos_inds.unsqueeze(0).repeat(pos_inds.size(0), 1)
+
+
+        return (labels, label_weights, bbox_targets, bbox_weights,
+                pos_inds, neg_inds, pos_assigned_gt_inds)
+
     def _get_target_single(self,
                            cls_score,
                            lanes_pred,
@@ -682,6 +804,36 @@ class TopoNetHead(AnchorFreeHead):
         return (labels, label_weights, bbox_targets, bbox_weights, lclc_target,
                 pos_inds, neg_inds, pos_assigned_gt_inds)
 
+    def my_get_targets(self,
+                    cls_scores_list,
+                    lanes_preds_list,
+                    gt_lanes_list,
+                    gt_labels_list,
+                    gt_bboxes_ignore_list=None):
+
+        assert gt_bboxes_ignore_list is None, \
+            'Only supports for gt_bboxes_ignore setting to None.'
+        num_imgs = len(cls_scores_list)
+        gt_bboxes_ignore_list = [
+            gt_bboxes_ignore_list for _ in range(num_imgs)
+        ]
+
+        (
+        labels_list, label_weights_list, lanes_targets_list, lanes_weights_list,
+        pos_inds_list, neg_inds_list, pos_assigned_gt_inds_list) = multi_apply(
+            self._my_get_target_single, cls_scores_list, lanes_preds_list,
+            gt_labels_list, gt_lanes_list,
+            gt_bboxes_ignore_list)
+        num_total_pos = sum((inds.numel() for inds in pos_inds_list))
+        num_total_neg = sum((inds.numel() for inds in neg_inds_list))
+        assign_result = dict(
+            pos_inds=pos_inds_list, neg_inds=neg_inds_list,
+            pos_assigned_gt_inds=pos_assigned_gt_inds_list
+        )
+        return (
+        labels_list, label_weights_list, lanes_targets_list, lanes_weights_list,
+        num_total_pos, num_total_neg, assign_result)
+
     def get_targets(self,
                     cls_scores_list,
                     lanes_preds_list,
@@ -709,6 +861,67 @@ class TopoNetHead(AnchorFreeHead):
         )
         return (labels_list, label_weights_list, lanes_targets_list, lanes_weights_list, lclc_targets_list,
                 num_total_pos, num_total_neg, assign_result)
+
+
+    def my_loss_single(self,
+                    cls_scores,
+                    lanes_preds,
+                    te_assign_result,
+                    gt_lanes_list,
+                    gt_labels_list,
+                    layer_index,
+                    gt_bboxes_ignore_list=None):
+
+        num_imgs = cls_scores.size(0)
+        cls_scores_list = [cls_scores[i] for i in range(num_imgs)]
+        lanes_preds_list = [lanes_preds[i] for i in range(num_imgs)]
+
+        cls_reg_targets = self.my_get_targets(cls_scores_list, lanes_preds_list,
+                                           gt_lanes_list, gt_labels_list,
+                                           gt_bboxes_ignore_list)
+        (labels_list, label_weights_list, bbox_targets_list, bbox_weights_list,
+         num_total_pos, num_total_neg, assign_result) = cls_reg_targets
+        labels = torch.cat(labels_list, 0)
+        label_weights = torch.cat(label_weights_list, 0)
+        bbox_targets = torch.cat(bbox_targets_list, 0)
+        bbox_weights = torch.cat(bbox_weights_list, 0)
+
+        # classification loss
+        cls_scores = cls_scores.reshape(-1, self.cls_out_channels)
+        # construct weighted avg_factor to match with the official DETR repo
+        cls_avg_factor = num_total_pos * 1.0 + \
+            num_total_neg * self.bg_cls_weight
+        if self.sync_cls_avg_factor:
+            cls_avg_factor = reduce_mean(
+                cls_scores.new_tensor([cls_avg_factor]))
+
+        cls_avg_factor = max(cls_avg_factor, 1)
+        loss_cls = self.loss_cls(
+            cls_scores, labels, label_weights, avg_factor=cls_avg_factor)
+
+        # Compute the average number of gt boxes accross all gpus, for
+        # normalization purposes
+        num_total_pos = loss_cls.new_tensor([num_total_pos])
+        num_total_pos = torch.clamp(reduce_mean(num_total_pos), min=1).item()
+
+        # regression L1 loss
+        lanes_preds = lanes_preds.reshape(-1, lanes_preds.size(-1))
+        isnotnan = torch.isfinite(bbox_targets).all(dim=-1)
+        bbox_weights = bbox_weights * self.code_weights
+
+        loss_bbox = self.loss_bbox(
+            lanes_preds[isnotnan, :self.code_size],
+            bbox_targets[isnotnan, :self.code_size],
+            bbox_weights[isnotnan, :self.code_size],
+            avg_factor=num_total_pos)
+
+        # lclc loss
+        if digit_version(TORCH_VERSION) >= digit_version('1.8'):
+            loss_cls = torch.nan_to_num(loss_cls)
+            loss_bbox = torch.nan_to_num(loss_bbox)
+        return loss_cls, loss_bbox
+
+
 
     def loss_single(self,
                     cls_scores,
@@ -779,6 +992,52 @@ class TopoNetHead(AnchorFreeHead):
             loss_cls = torch.nan_to_num(loss_cls)
             loss_bbox = torch.nan_to_num(loss_bbox)
         return loss_cls, loss_bbox, loss_lclc, loss_lcte
+
+
+    # TODO:
+    @force_fp32(apply_to=('preds_dicts'))
+    def my_loss(self,
+             preds_dicts,
+             gt_lanes_3d,
+             gt_labels_list,
+             te_assign_results,
+             gt_bboxes_ignore=None,
+             img_metas=None):
+
+        assert gt_bboxes_ignore is None, \
+            f'{self.__class__.__name__} only supports ' \
+            f'for gt_bboxes_ignore setting to None.'
+        all_cls_scores = preds_dicts['all_cls_scores']
+        all_lanes_preds = preds_dicts['all_lanes_preds']
+
+        num_dec_layers = len(all_cls_scores)
+        device = gt_labels_list[0].device
+
+        gt_lanes_list = [lane for lane in gt_lanes_3d]
+
+        all_gt_lanes_list = [gt_lanes_list for _ in range(num_dec_layers)]
+        all_gt_labels_list = [gt_labels_list for _ in range(num_dec_layers)]
+
+        layer_index = [i for i in range(num_dec_layers)]
+
+        losses_cls, losses_bbox = multi_apply(
+            self.my_loss_single, all_cls_scores, all_lanes_preds, te_assign_results,
+            all_gt_lanes_list, all_gt_labels_list, layer_index)
+
+        loss_dict = dict()
+
+        # loss from the last decoder layer
+        loss_dict['loss_lane_cls'] = losses_cls[-1]
+        loss_dict['loss_lane_reg'] = losses_bbox[-1]
+
+        # loss from other decoder layers
+        num_dec_layer = 0
+        for loss_cls_i, loss_bbox_i in zip(
+                losses_cls[:-1], losses_bbox[:-1]):
+            loss_dict[f'd{num_dec_layer}.loss_lane_cls'] = loss_cls_i
+            loss_dict[f'd{num_dec_layer}.loss_lane_reg'] = loss_bbox_i
+            num_dec_layer += 1
+        return loss_dict
 
     @force_fp32(apply_to=('preds_dicts'))
     def loss(self,

@@ -33,8 +33,8 @@ from mmdet.models.utils.transformer import TRANSFORMER_LAYER
 import warnings
 from mmcv.runner.base_module import BaseModule, ModuleList, Sequential
 from mmcv.cnn.bricks.transformer import build_attention
-
-
+from mmcv.ops.multi_scale_deform_attn import MultiScaleDeformableAttention
+from mmcv.cnn.bricks.transformer import FFN
 
 @TRANSFORMER_LAYER.register_module()
 class MyDetrTransformerDecoderLayer(DetrTransformerDecoderLayer):
@@ -59,57 +59,109 @@ class MyDetrTransformerDecoderLayer(DetrTransformerDecoderLayer):
             **kwargs
         )
 
-    # def forward_self_attention(self,
-    #                            query_te,
-    #                            query_cl,
-    #                            query_pos=None,
-    #                            attn_masks=None,
-    #                            query_key_padding_mask=None,
-    #                            **kwargs):
-    #
-    #     if attn_masks is not None or query_key_padding_mask is not None:
-    #         raise NotImplementedError()
-    #
-    #
-    #     query = torch.cat((query_te, query_cl), dim=0) # TODO: check dim
-    #
-    #
-    #     identity = query
-    #
-    #     if attn_masks is None:
-    #         attn_masks = [None for _ in range(self.num_attn)]
-    #     elif isinstance(attn_masks, torch.Tensor):
-    #         attn_masks = [
-    #             copy.deepcopy(attn_masks) for _ in range(self.num_attn)
-    #         ]
-    #         warnings.warn(f'Use same attn_mask in all attentions in '
-    #                       f'{self.__class__.__name__} ')
-    #     else:
-    #         assert len(attn_masks) == self.num_attn, f'The length of ' \
-    #                                                  f'attn_masks {len(attn_masks)} must be equal ' \
-    #                                                  f'to the number of attention in ' \
-    #                                                  f'operation_order {self.num_attn}'
-    #
-    #     attn_index = 0
-    #     temp_key = temp_value = query
-    #
-    #     query, decoder_self_attention_q, decoder_self_attention_k = \
-    #         self.attentions[attn_index](
-    #             query,
-    #             temp_key,
-    #             temp_value,
-    #             identity if self.pre_norm else None,
-    #             query_pos=query_pos,
-    #             key_pos=query_pos,
-    #             attn_mask=attn_masks[attn_index],
-    #             key_padding_mask=query_key_padding_mask,
-    #             **kwargs)
-    #
-    #
-    #     # TODO: split and return
-    #     return
+    def forward_self_attention(self,
+                               query_te,
+                               query_cl,
+                               query_pos_te=None,
+                               query_pos_cl=None,
+                               attn_masks=None,
+                               query_key_padding_mask=None):
+
+        if attn_masks is not None or query_key_padding_mask is not None:
+            raise NotImplementedError()
 
 
+        query = torch.cat([query_te, query_cl], dim=0)
+        query_pos = torch.cat([query_pos_te, query_pos_cl], dim=0)
+
+        identity = query
+
+        attn_index = 0
+        temp_key = temp_value = query
+
+        query, decoder_self_attention_q, decoder_self_attention_k = \
+            self.attentions[attn_index](
+                query,
+                temp_key,
+                temp_value,
+                identity if self.pre_norm else None,
+                query_pos=query_pos,
+                key_pos=query_pos,
+                attn_mask=attn_masks,
+                key_padding_mask=query_key_padding_mask,
+                )
+
+
+        # TODO: split and return
+        num_queries_te = query_te.shape[0]
+
+        query_te = query[:num_queries_te]
+        query_cl = query[num_queries_te:]
+        decoder_self_attention_q_te = decoder_self_attention_q[:num_queries_te]
+        decoder_self_attention_q_cl = decoder_self_attention_q[num_queries_te:]
+        decoder_self_attention_k_te = decoder_self_attention_k[:num_queries_te]
+        decoder_self_attention_k_cl = decoder_self_attention_k[num_queries_te:]
+
+        return query_te, query_cl, decoder_self_attention_q_te, decoder_self_attention_q_cl, decoder_self_attention_k_te, decoder_self_attention_k_cl
+
+    def forward_remaining(self,
+                          query,
+                          key=None,
+                          value=None,
+                          query_pos=None,
+                          key_pos=None,
+                          attn_masks=None,
+                          query_key_padding_mask=None,
+                          key_padding_mask=None,
+                          **kwargs):
+
+        norm_index = 0
+        attn_index = 1
+        ffn_index = 0
+        identity = query
+        if attn_masks is None:
+            attn_masks = [None for _ in range(self.num_attn)]
+        elif isinstance(attn_masks, torch.Tensor):
+            attn_masks = [
+                copy.deepcopy(attn_masks) for _ in range(self.num_attn)
+            ]
+            warnings.warn(f'Use same attn_mask in all attentions in '
+                          f'{self.__class__.__name__} ')
+        else:
+            assert len(attn_masks) == self.num_attn, f'The length of ' \
+                                                     f'attn_masks {len(attn_masks)} must be equal ' \
+                                                     f'to the number of attention in ' \
+                                                     f'operation_order {self.num_attn}'
+
+        for layer in self.operation_order:
+            if layer == 'self_attn':
+                pass
+
+            elif layer == 'norm':
+                query = self.norms[norm_index](query)
+                norm_index += 1
+
+            elif layer == 'cross_attn':
+                query = self.attentions[attn_index](
+                    query,
+                    key,
+                    value,
+                    identity if self.pre_norm else None,
+                    query_pos=query_pos,
+                    key_pos=key_pos,
+                    attn_mask=attn_masks[attn_index],
+                    key_padding_mask=key_padding_mask,
+                    **kwargs)
+                attn_index += 1
+                identity = query
+
+            elif layer == 'ffn':
+                # linear layers: 256 --> 512 --> 256 with ReLU and dropout
+                query = self.ffns[ffn_index](
+                    query, identity if self.pre_norm else None)
+                ffn_index += 1
+
+        return query
 
 
     def forward(self,

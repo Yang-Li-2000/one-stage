@@ -15,6 +15,7 @@ from mmdet.models.builder import build_head
 from mmdet3d.models.detectors.mvx_two_stage import MVXTwoStageDetector
 
 from ...utils.builder import build_bev_constructor
+from mmdet.models.utils.transformer import inverse_sigmoid
 
 
 @DETECTORS.register_module()
@@ -54,12 +55,6 @@ class MergedTopoNet(MVXTwoStageDetector):
             'prev_pos': 0,
             'prev_angle': 0,
         }
-
-        # TODO: take out layers from two transformers
-        # te_decoder_layers = self.bbox_head.transformer.decoder.layers
-        # cl_decoder_layers = self.pts_bbox_head.transformer.decoder.layers
-
-
 
     def extract_img_feat(self, img, img_metas, len_queue=None):
         """Extract features of images."""
@@ -168,27 +163,139 @@ class MergedTopoNet(MVXTwoStageDetector):
         # # dense_heads.toponet_head.TopoNetHead: (gnn in ffn uses te_feature)
         # outs = self.pts_bbox_head(img_feats, bev_feats, img_metas, None, None)
 
-
         # 1. prepare inputs
         te_feats = None
         te_cls_scores = None
         bev_feats = self.bev_constructor(img_feats, img_metas, prev_bev)
 
-
         # 2. go through the first half
         outputs_te_head_first_half = self.bbox_head.forward_first_half(front_view_img_feats, bbox_img_metas)
         outputs_te_transformer_first_half = self.bbox_head.transformer.forward_first_half(*outputs_te_head_first_half)
         outputs_cl_head_first_half = self.pts_bbox_head.forward_first_half(img_feats, bev_feats, img_metas, te_feats, te_cls_scores)
-        outputs_cl_transformer_first_half = self.pts_bbox_head.transformer.forward_first_half(*outputs_cl_head_first_half)
+        outputs_cl_transformer_first_half = self.pts_bbox_head.transformer.forward_first_half(
+            outputs_cl_head_first_half['mlvl_feats'],
+            outputs_cl_head_first_half['bev_feats'],
+            outputs_cl_head_first_half['object_query_embeds'],
+            outputs_cl_head_first_half['bev_h'],
+            outputs_cl_head_first_half['bev_w'],
+            img_metas=outputs_cl_head_first_half['img_metas']
+        )
 
+        # 3. manually go through decoders
+        num_decoder_layers = 6 # TODO: replace hard-coded value
 
-        # 3. TODO: manually go through decoders
+        # for te decoder
+        query_te = outputs_te_transformer_first_half['query']
+        memory_te = outputs_te_transformer_first_half['memory']
+        query_pos_te = outputs_te_transformer_first_half['query_pos']
+        init_reference_out_te = outputs_te_transformer_first_half['init_reference_out']
+        mask_flatten_te = outputs_te_transformer_first_half['mask_flatten']
+        reference_points_te = outputs_te_transformer_first_half['reference_points']
+        spatial_shapes_te = outputs_te_transformer_first_half['spatial_shapes']
+        level_start_index_te = outputs_te_transformer_first_half['level_start_index']
+        valid_ratios_te = outputs_te_transformer_first_half['valid_ratios']
+        reg_branches_te = outputs_te_transformer_first_half['reg_branches']
+        kwargs_te = outputs_te_transformer_first_half['kwargs']
 
+        # for cl decoder
+        query_cl = outputs_cl_transformer_first_half['query']
+        key_cl = outputs_cl_transformer_first_half['key']
+        value_cl = outputs_cl_transformer_first_half['value']
+        query_pos_cl = outputs_cl_transformer_first_half['query_pos']
+        reference_points_cl = outputs_cl_transformer_first_half['reference_points']
+        spatial_shapes_cl = outputs_cl_transformer_first_half['spatial_shapes']
+        level_start_index_cl = outputs_cl_transformer_first_half['level_start_index']
+        init_reference_out_cl = outputs_cl_transformer_first_half['init_reference_out']
+        kwargs_cl = outputs_cl_transformer_first_half['kwargs']
 
+        # for te decoder layer
+        intermediate_te = []
+        intermediate_reference_points_te = []
 
+        # for cl decoder layer
+        intermediate_cl = []
+        intermediate_reference_points_cl = []
 
+        # looping over each decoder layer
+        for lid in range(num_decoder_layers):
 
+            # 0. input preparation (te)
+            if reference_points_te.shape[-1] == 4:
+                reference_points_input_te = reference_points_te[:, :, None] * torch.cat([valid_ratios_te, valid_ratios_te], -1)[:, None]
+            else:
+                assert reference_points_te.shape[-1] == 2
+                reference_points_input_te = reference_points_te[:, :, None] * valid_ratios_te[:, None]
 
+            # 0. input preparation (cl)
+            reference_points_input_cl = reference_points_cl[..., :2].unsqueeze(2)
+
+            # 1. self-attention after concatenating queries
+            query_te, query_cl, decoder_self_attention_q_te, decoder_self_attention_q_cl, decoder_self_attention_k_te, decoder_self_attention_k_cl = \
+            self.bbox_head.transformer.decoder.layers[
+                lid].forward_self_attention(query_te, query_cl,
+                                            query_pos_te=query_pos_te,
+                                            query_pos_cl=query_pos_cl)
+
+            # 2. remaining layers in current decoder layer
+            query_te = self.bbox_head.transformer.decoder.layers[
+                lid].forward_remaining(query_te, key=None, value=memory_te,
+                                       query_pos=query_pos_te,
+                                       key_padding_mask=mask_flatten_te,
+                                       reference_points=reference_points_input_te,
+                                       spatial_shapes=spatial_shapes_te,
+                                       level_start_index=level_start_index_te,
+                                       valid_ratios=valid_ratios_te,
+                                       reg_branches=reg_branches_te,
+                                       **kwargs_te)
+            query_cl = self.pts_bbox_head.transformer.decoder.layers[
+                lid].forward_remaining(query_cl,
+                                       key=key_cl,
+                                       value=value_cl,
+                                       query_pos=query_pos_cl,
+                                       spatial_shapes=spatial_shapes_cl,
+                                       level_start_index=level_start_index_cl,
+                                       reference_points=reference_points_input_cl,
+                                       **kwargs_cl)
+
+            # 3. remaining operations (te)
+            query_te = query_te.permute(1, 0, 2)
+            if reg_branches_te is not None:
+                tmp_te = reg_branches_te[lid](query_te)
+                if reference_points_te.shape[-1] == 4:
+                    new_reference_points_te = tmp_te + inverse_sigmoid(
+                        reference_points_te)
+                    new_reference_points_te = new_reference_points_te.sigmoid()
+                else:
+                    assert reference_points_te.shape[-1] == 2
+                    new_reference_points_te = tmp_te
+                    new_reference_points_te[..., :2] = tmp_te[..., :2] + inverse_sigmoid(reference_points_te)
+                    new_reference_points_te = new_reference_points_te.sigmoid()
+                reference_points_te = new_reference_points_te.detach()
+            query_te = query_te.permute(1, 0, 2)
+            if self.bbox_head.transformer.decoder.return_intermediate:
+                intermediate_te.append(query_te)
+                intermediate_reference_points_te.append(reference_points_te)
+
+            # 3. remaining operations (cl)
+            if self.pts_bbox_head.transformer.decoder.return_intermediate:
+                intermediate_cl.append(query_cl)
+                intermediate_reference_points_cl.append(reference_points_cl) # the each for each layer. check it. this is correct.
+
+            # 4. TODO: (possibly) (intermediate) relation prediction using Q and K (check EGTR)
+
+        # remaining operations (te)
+        if self.bbox_head.transformer.decoder.return_intermediate:
+            outputs_te_decoder = (torch.stack(intermediate_te), torch.stack(intermediate_reference_points_te))
+        else:
+            outputs_te_decoder = (query_te, reference_points_te)
+
+        # remaining operations (cl)
+        if self.pts_bbox_head.transformer.decoder.return_intermediate:
+            outputs_cl_decoder = (torch.stack(intermediate_cl), torch.stack(intermediate_reference_points_cl))
+        else:
+            outputs_cl_decoder = (query_cl, reference_points_cl)
+
+        # TODO: (possibly) final relation prediction using Q and K (check EGTR)
 
         # 4. go through the second half
         outputs_te_transformer_second_half = self.bbox_head.transformer.forward_second_half(*outputs_te_decoder, outputs_te_transformer_first_half['init_reference_out'])
@@ -196,8 +303,7 @@ class MergedTopoNet(MVXTwoStageDetector):
         outputs_cl_transformer_last_half = self.pts_bbox_head.transformer.forward_second_half(*outputs_cl_decoder, outputs_cl_transformer_first_half['init_reference_out'])
         outs = self.pts_bbox_head.forward_second_half(outputs_cl_transformer_last_half)
 
-
-        # 5. TODO: loss computaiton
+        # 5. TODO: loss computation
         te_losses = {}
         bbox_losses, te_assign_result = self.bbox_head.loss(bbox_outs, gt_bboxes, gt_labels, bbox_img_metas, gt_bboxes_ignore)
         for loss in bbox_losses:
@@ -208,8 +314,8 @@ class MergedTopoNet(MVXTwoStageDetector):
                 te_losses[loss] *= 0
 
         losses = dict()
-        loss_inputs = [outs, gt_lanes_3d, gt_lane_labels_3d, gt_lane_adj, gt_lane_lcte_adj, te_assign_result]
-        lane_losses = self.pts_bbox_head.loss(*loss_inputs, img_metas=img_metas)
+        loss_inputs = [outs, gt_lanes_3d, gt_lane_labels_3d, te_assign_result]
+        lane_losses = self.pts_bbox_head.my_loss(*loss_inputs, img_metas=img_metas)
         for loss in lane_losses:
             losses['lane_head.' + loss] = lane_losses[loss]
 

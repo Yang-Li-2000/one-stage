@@ -195,7 +195,7 @@ model = dict(
                             num_levels=1),
                     ],
                     ffn_cfgs=dict(
-                        type='FFN_SGNN',
+                        type='MyDummy_FFN_SGNN',
                         embed_dims=_dim_,
                         feedforward_channels=_ffn_dim_,
                         num_te_classes=13,

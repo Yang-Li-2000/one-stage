@@ -279,6 +279,15 @@ def main():
         test_cfg=cfg.get('test_cfg'))
     model.init_weights()
 
+    # TODO: remove unused layers
+    for i in range(6):
+        model.pts_bbox_head.transformer.decoder.layers[i].attentions[0] = None
+
+    model.pts_bbox_head.lclc_branches = None
+    model.pts_bbox_head.lcte_branches = None
+    model.pts_bbox_head.te_embed_branches = None
+    # cfg.find_unused_parameters = True
+
     logger.info(f'Model:\n{model}')
     datasets = [build_dataset(cfg.data.train)]
     if len(cfg.workflow) == 2:

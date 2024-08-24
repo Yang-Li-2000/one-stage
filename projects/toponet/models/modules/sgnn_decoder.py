@@ -206,6 +206,56 @@ class SGNNDecoderLayer(BaseTransformerLayer):
 
 
 @FEEDFORWARD_NETWORK.register_module()
+class MyDummy_FFN_SGNN(BaseModule):
+
+    def __init__(self,
+                 embed_dims=256,
+                 feedforward_channels=512,
+                 num_fcs=2,
+                 act_cfg=dict(type='ReLU', inplace=True),
+                 ffn_drop=0.1,
+                 dropout_layer=None,
+                 add_identity=True,
+                 init_cfg=None,
+                 edge_weight=0.5,
+                 num_te_classes=13,
+                 **kwargs):
+        super(MyDummy_FFN_SGNN, self).__init__(init_cfg)
+        assert num_fcs >= 2, 'num_fcs should be no less ' \
+            f'than 2. got {num_fcs}.'
+        self.embed_dims = embed_dims
+        self.feedforward_channels = feedforward_channels
+        self.num_fcs = num_fcs
+        self.act_cfg = act_cfg
+        self.activate = build_activation_layer(act_cfg)
+
+        layers = []
+        in_channels = embed_dims
+        for _ in range(num_fcs - 1):
+            layers.append(
+                Sequential(
+                    Linear(in_channels, feedforward_channels), self.activate,
+                    nn.Dropout(ffn_drop)))
+            in_channels = feedforward_channels
+        layers.append(
+            Sequential(
+                Linear(feedforward_channels, embed_dims), self.activate,
+                nn.Dropout(ffn_drop)))
+        self.layers = Sequential(*layers)
+        self.dropout_layer = build_dropout(dropout_layer) if dropout_layer else torch.nn.Identity()
+        self.add_identity = add_identity
+
+    def forward(self, lc_query, identity=None):
+
+        out = self.layers(lc_query)
+        if not self.add_identity:
+            return self.dropout_layer(out)
+        if identity is None:
+            identity = lc_query
+        return identity + self.dropout_layer(out)
+
+
+@FEEDFORWARD_NETWORK.register_module()
 class FFN_SGNN(BaseModule):
 
     def __init__(self,
