@@ -92,7 +92,7 @@ class MyDetrTransformerDecoderLayer(DetrTransformerDecoderLayer):
                 )
 
 
-        # TODO: split and return
+        # Split and return
         num_queries_te = query_te.shape[0]
 
         query_te = query[:num_queries_te]

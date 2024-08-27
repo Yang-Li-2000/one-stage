@@ -279,7 +279,7 @@ def main():
         test_cfg=cfg.get('test_cfg'))
     model.init_weights()
 
-    # TODO: remove unused layers
+    # Remove unused layers
     for i in range(6):
         model.pts_bbox_head.transformer.decoder.layers[i].attentions[0] = None
 
