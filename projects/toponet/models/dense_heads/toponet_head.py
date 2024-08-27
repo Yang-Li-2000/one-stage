@@ -994,15 +994,18 @@ class TopoNetHead(AnchorFreeHead):
         return loss_cls, loss_bbox, loss_lclc, loss_lcte
 
 
-    # TODO:
     @force_fp32(apply_to=('preds_dicts'))
     def my_loss(self,
-             preds_dicts,
-             gt_lanes_3d,
-             gt_labels_list,
-             te_assign_results,
-             gt_bboxes_ignore=None,
-             img_metas=None):
+                preds_dicts,
+                gt_lanes_3d,
+                gt_labels_list,
+                gt_lane_adj,
+                gt_lane_lcte_adj,
+                te_assign_results,
+                gt_bboxes_ignore=None,
+                img_metas=None,
+                pred_connectivity_tecl=None,
+                pred_connectivity_clcl=None):
 
         assert gt_bboxes_ignore is None, \
             f'{self.__class__.__name__} only supports ' \
@@ -1020,11 +1023,40 @@ class TopoNetHead(AnchorFreeHead):
 
         layer_index = [i for i in range(num_dec_layers)]
 
+        SEPARATE_LAST_LAYER_LOSS = pred_connectivity_tecl is not None
+        if SEPARATE_LAST_LAYER_LOSS:
+            num_dec_layers -= 1
+
         losses_cls, losses_bbox = multi_apply(
-            self.my_loss_single, all_cls_scores, all_lanes_preds, te_assign_results,
-            all_gt_lanes_list, all_gt_labels_list, layer_index)
+            self.my_loss_single,
+            all_cls_scores[:num_dec_layers],
+            all_lanes_preds[:num_dec_layers],
+            te_assign_results[:num_dec_layers],
+            all_gt_lanes_list[:num_dec_layers],
+            all_gt_labels_list[:num_dec_layers],
+            layer_index[:num_dec_layers])
 
         loss_dict = dict()
+
+        # TODO: check the relationship between te_assign_results and model.pts_bbox_head.te_embed_branches
+        if SEPARATE_LAST_LAYER_LOSS:
+            losses_cls_final, losses_bbox_final, losses_lclc_final, losses_lcte_final = self.loss_single(
+                all_cls_scores[-1],
+                all_lanes_preds[-1],
+                pred_connectivity_clcl,
+                pred_connectivity_tecl,
+                te_assign_results[-1],
+                all_gt_lanes_list[-1],
+                all_gt_labels_list[-1],
+                gt_lane_adj,
+                gt_lane_lcte_adj,
+                layer_index[-1],
+            )
+            # add losses from the last layer
+            losses_cls.append(losses_cls_final)
+            losses_bbox.append(losses_bbox_final)
+            loss_dict['loss_lclc_rel'] = losses_lclc_final
+            loss_dict['loss_lcte_rel'] = losses_lcte_final
 
         # loss from the last decoder layer
         loss_dict['loss_lane_cls'] = losses_cls[-1]
