@@ -229,6 +229,23 @@ def main():
             # segmentation dataset has `PALETTE` attribute
             model.PALETTE = dataset.PALETTE
 
+        # Remove unused layers
+        for i in range(6):
+            model.pts_bbox_head.transformer.decoder.layers[i].attentions[
+                0] = None
+
+        model.pts_bbox_head.te_embed_branches = None
+
+        for i in range(len(model.pts_bbox_head.lclc_branches) - 1):
+            model.pts_bbox_head.lclc_branches[i] = None
+            model.pts_bbox_head.lcte_branches[i] = None
+        model.pts_bbox_head.lclc_branches[-1].MLP_o1 = None
+        model.pts_bbox_head.lclc_branches[-1].MLP_o2 = None
+        model.pts_bbox_head.lclc_branches[-1].classifier = None
+        model.pts_bbox_head.lcte_branches[-1].MLP_o1 = None
+        model.pts_bbox_head.lcte_branches[-1].MLP_o2 = None
+        model.pts_bbox_head.lcte_branches[-1].classifier = None
+
         if not distributed:
             if "gpu_ids" in cfg:
                 model = MMDataParallel(model, device_ids=cfg.gpu_ids)

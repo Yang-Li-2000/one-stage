@@ -180,48 +180,7 @@ class MergedTopoNet(MVXTwoStageDetector):
             self.train()
             return prev_bev
 
-    @auto_fp16(apply_to=('img'))
-    def forward_train(self,
-                      img=None,
-                      img_metas=None,
-                      gt_labels=None,
-                      gt_bboxes=None,
-                      gt_lanes_3d=None,
-                      gt_lane_labels_3d=None,
-                      gt_lane_adj=None,
-                      gt_lane_lcte_adj=None,
-                      gt_bboxes_ignore=None,
-                      ):
-
-        len_queue = img.size(1)
-        prev_img = img[:, :-1, ...]
-        img = img[:, -1, ...]
-
-        if self.video_test_mode:
-            prev_img_metas = copy.deepcopy(img_metas)
-            prev_bev = self.obtain_history_bev(prev_img, prev_img_metas)
-        else:
-            prev_bev = None
-
-        img_metas = [each[len_queue - 1] for each in img_metas]
-        img_feats = self.extract_feat(img=img, img_metas=img_metas)
-
-        front_view_img_feats = [lvl[:, 0] for lvl in img_feats]
-        batch_input_shape = tuple(img[0, 0].size()[-2:])
-        bbox_img_metas = []
-        for img_meta in img_metas:
-            bbox_img_metas.append(
-                dict(
-                    batch_input_shape=batch_input_shape,
-                    img_shape=img_meta['img_shape'][0],
-                    scale_factor=img_meta['scale_factor'][0],
-                    crop_shape=img_meta['crop_shape'][0]))
-            img_meta['batch_input_shape'] = batch_input_shape
-
-        # # dense_heads.deformable_detr_head.CustomDeformableDETRHead
-        # bbox_outs = self.bbox_head(front_view_img_feats, bbox_img_metas)
-        # # dense_heads.toponet_head.TopoNetHead: (gnn in ffn uses te_feature)
-        # outs = self.pts_bbox_head(img_feats, bev_feats, img_metas, None, None)
+    def predict(self, img_feats, img_metas, prev_bev, front_view_img_feats, bbox_img_metas):
 
         # 1. prepare inputs
         te_feats = None
@@ -295,10 +254,10 @@ class MergedTopoNet(MVXTwoStageDetector):
 
             # 1. self-attention after concatenating queries
             query_te, query_cl, decoder_self_attention_q_te, decoder_self_attention_q_cl, decoder_self_attention_k_te, decoder_self_attention_k_cl = \
-            self.bbox_head.transformer.decoder.layers[
-                lid].forward_self_attention(query_te, query_cl,
-                                            query_pos_te=query_pos_te,
-                                            query_pos_cl=query_pos_cl)
+                self.bbox_head.transformer.decoder.layers[
+                    lid].forward_self_attention(query_te, query_cl,
+                                                query_pos_te=query_pos_te,
+                                                query_pos_cl=query_pos_cl)
 
             concatenated_decoder_self_attention_q = torch.cat([decoder_self_attention_q_te, decoder_self_attention_q_cl], dim=0)
             concatenated_decoder_self_attention_k = torch.cat([decoder_self_attention_k_te, decoder_self_attention_k_cl], dim=0)
@@ -348,7 +307,7 @@ class MergedTopoNet(MVXTwoStageDetector):
             # 3. remaining operations (cl)
             if self.pts_bbox_head.transformer.decoder.return_intermediate:
                 intermediate_cl.append(query_cl)
-                intermediate_reference_points_cl.append(reference_points_cl) # the each for each layer. check it. this is correct.
+                intermediate_reference_points_cl.append(reference_points_cl)  # the each for each layer. check it. this is correct.
 
         # remaining operations (te)
         if self.bbox_head.transformer.decoder.return_intermediate:
@@ -397,7 +356,6 @@ class MergedTopoNet(MVXTwoStageDetector):
         )  # [bsz, num_object_queries, num_object_queries, num_layers, 2*d_model]
         del decoder_attention_queries, decoder_attention_keys
 
-
         # Use final hidden representations
         sequence_output = torch.cat([query_te, query_cl], dim=0).permute(1, 0, 2)
         subject_output = (
@@ -445,7 +403,54 @@ class MergedTopoNet(MVXTwoStageDetector):
         outputs_cl_transformer_last_half = self.pts_bbox_head.transformer.forward_second_half(*outputs_cl_decoder, outputs_cl_transformer_first_half['init_reference_out'])
         outs = self.pts_bbox_head.forward_second_half(outputs_cl_transformer_last_half)
 
-        # 5. Loss computation
+        outs['all_lclc_preds'] = [pred_connectivity_clcl]
+        outs['all_lcte_preds'] = [pred_connectivity_tecl]
+
+        return bbox_outs, outs, bev_feats
+
+    @auto_fp16(apply_to=('img'))
+    def forward_train(self,
+                      img=None,
+                      img_metas=None,
+                      gt_labels=None,
+                      gt_bboxes=None,
+                      gt_lanes_3d=None,
+                      gt_lane_labels_3d=None,
+                      gt_lane_adj=None,
+                      gt_lane_lcte_adj=None,
+                      gt_bboxes_ignore=None,
+                      ):
+
+        # 1. Generate inputs
+        len_queue = img.size(1)
+        prev_img = img[:, :-1, ...]
+        img = img[:, -1, ...]
+
+        if self.video_test_mode:
+            prev_img_metas = copy.deepcopy(img_metas)
+            prev_bev = self.obtain_history_bev(prev_img, prev_img_metas)
+        else:
+            prev_bev = None
+
+        img_metas = [each[len_queue - 1] for each in img_metas]
+        img_feats = self.extract_feat(img=img, img_metas=img_metas)
+
+        front_view_img_feats = [lvl[:, 0] for lvl in img_feats]
+        batch_input_shape = tuple(img[0, 0].size()[-2:])
+        bbox_img_metas = []
+        for img_meta in img_metas:
+            bbox_img_metas.append(
+                dict(
+                    batch_input_shape=batch_input_shape,
+                    img_shape=img_meta['img_shape'][0],
+                    scale_factor=img_meta['scale_factor'][0],
+                    crop_shape=img_meta['crop_shape'][0]))
+            img_meta['batch_input_shape'] = batch_input_shape
+
+        # 2. Generate predictions
+        bbox_outs, outs, _ = self.predict(img_feats, img_metas, prev_bev, front_view_img_feats, bbox_img_metas)
+
+        # 3. Compute Losses
         te_losses = {}
         bbox_losses, te_assign_result = self.bbox_head.loss(bbox_outs, gt_bboxes, gt_labels, bbox_img_metas, gt_bboxes_ignore)
         for loss in bbox_losses:
@@ -457,7 +462,7 @@ class MergedTopoNet(MVXTwoStageDetector):
 
         losses = dict()
         loss_inputs = [outs, gt_lanes_3d, gt_lane_labels_3d, gt_lane_adj, gt_lane_lcte_adj, te_assign_result]
-        lane_losses = self.pts_bbox_head.my_loss(*loss_inputs, img_metas=img_metas, pred_connectivity_tecl=pred_connectivity_tecl, pred_connectivity_clcl=pred_connectivity_clcl)
+        lane_losses = self.pts_bbox_head.my_loss(*loss_inputs, img_metas=img_metas, pred_connectivity_tecl=outs['all_lcte_preds'][-1], pred_connectivity_clcl=outs['all_lclc_preds'][-1])
         for loss in lane_losses:
             losses['lane_head.' + loss] = lane_losses[loss]
 
@@ -502,9 +507,9 @@ class MergedTopoNet(MVXTwoStageDetector):
 
     def simple_test_pts(self, x, img_metas, img=None, prev_bev=None,
                         rescale=False):
-        """Test function"""
-        batchsize = len(img_metas)
 
+        # 1. Generate inputs
+        batchsize = len(img_metas)
         front_view_img_feats = [lvl[:, 0] for lvl in x]
         batch_input_shape = tuple(img[0, 0].size()[-2:])
         bbox_img_metas = []
@@ -516,17 +521,13 @@ class MergedTopoNet(MVXTwoStageDetector):
                     scale_factor=img_meta['scale_factor'][0],
                     crop_shape=img_meta['crop_shape'][0]))
             img_meta['batch_input_shape'] = batch_input_shape
-        bbox_outs = self.bbox_head(front_view_img_feats, bbox_img_metas)
-        bbox_results = self.bbox_head.get_bboxes(bbox_outs, bbox_img_metas,
-                                                 rescale=rescale)
-        te_feats = bbox_outs['history_states']
-        te_cls_scores = bbox_outs['all_cls_scores']
-        bev_feats = self.bev_constructor(x, img_metas, prev_bev)
 
-        outs = self.pts_bbox_head(x, bev_feats, img_metas, te_feats,
-                                  te_cls_scores)
-        lane_results, lclc_results, lcte_results = self.pts_bbox_head.get_lanes(
-            outs, img_metas, rescale=rescale)
+        # 2. Generate predictions
+        bbox_outs, outs, bev_feats = self.predict(x, img_metas, prev_bev, front_view_img_feats, bbox_img_metas)
+
+        # 3. Get boxes, lanes, and relations
+        bbox_results = self.bbox_head.get_bboxes(bbox_outs, bbox_img_metas, rescale=rescale)
+        lane_results, lclc_results, lcte_results = self.pts_bbox_head.get_lanes(outs, img_metas, rescale=rescale)
 
         return bev_feats, bbox_results, lane_results, lclc_results, lcte_results
 
