@@ -125,10 +125,10 @@ class MyMultiheadAttention(MultiheadAttention):
             key_padding_mask=key_padding_mask)
 
         out = outputs_from__attn[0]
-        k = outputs_from__attn[2]
-        v = outputs_from__attn[3]
+        q = outputs_from__attn[2]
+        k = outputs_from__attn[3]
 
         if self.batch_first:
             out = out.transpose(0, 1)
 
-        return identity + self.dropout_layer(self.proj_drop(out)), k, v
+        return identity + self.dropout_layer(self.proj_drop(out)), q, k

@@ -691,8 +691,8 @@ def my_multi_head_attention_forward(
         # average attention weights over heads
         attn_output_weights = attn_output_weights.view(bsz, num_heads, tgt_len, src_len)
 
-        q = q.permute(1,0,2).view(tgt_len, 1, head_dim * num_heads)
-        k = k.permute(1,0,2).view(tgt_len, 1, head_dim * num_heads)
+        q = q.transpose(0, 1).view(tgt_len, bsz, num_heads * head_dim)
+        k = k.transpose(0, 1).view(tgt_len, bsz, num_heads * head_dim)
         return attn_output, attn_output_weights.sum(dim=1) / num_heads, q, k
 
     else:
