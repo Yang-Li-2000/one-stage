@@ -468,6 +468,9 @@ class MergedTopoNet(MVXTwoStageDetector):
 
         losses.update(te_losses)
 
+        # num_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        # print("num_params:", num_params)
+
         return losses
 
     def forward_test(self, img_metas, img=None, **kwargs):
