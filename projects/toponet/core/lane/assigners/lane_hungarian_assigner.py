@@ -115,3 +115,95 @@ class LaneHungarianAssigner3D(BaseAssigner):
 
         return AssignResult(
             num_gts, assigned_gt_inds, None, labels=assigned_labels)
+
+@BBOX_ASSIGNERS.register_module()
+class MyLaneHungarianAssigner3D(LaneHungarianAssigner3D):
+
+    def __init__(self,
+                 cls_cost=dict(type='ClassificationCost', weight=1.),
+                 reg_cost=dict(type='BBoxL1Cost', weight=1.0),
+                 normalize_gt=False,
+                 pc_range=None):
+        super().__init__(cls_cost=cls_cost,
+                         reg_cost=reg_cost,
+                         normalize_gt=normalize_gt,
+                         pc_range=pc_range)
+
+        # variables from egtr
+        self.smoothing = 1e-14
+        self.bias_epsilon = torch.log(torch.tensor(self.cls_cost.eps))
+
+
+    def assign(self,
+               lanes_pred,
+               cls_pred,
+               gt_lanes,
+               gt_labels,
+               gt_bboxes_ignore=None,
+               eps=1e-7):
+
+        assert gt_bboxes_ignore is None, 'Only case when gt_bboxes_ignore is None is supported.'
+        num_gts, num_bboxes = gt_lanes.size(0), lanes_pred.size(0)
+        # 1. assign -1 by default
+        assigned_gt_inds = lanes_pred.new_full((num_bboxes, ),
+                                              -1,
+                                              dtype=torch.long)
+        assigned_labels = lanes_pred.new_full((num_bboxes, ),
+                                             -1,
+                                             dtype=torch.long)
+        if num_gts == 0 or num_bboxes == 0:
+            # No ground truth or boxes, return empty assignment
+            if num_gts == 0:
+                # No ground truth, assign all to background
+                assigned_gt_inds[:] = 0
+            return AssignResult(num_gts, assigned_gt_inds, None, labels=assigned_labels)
+
+        # 2. compute the weighted costs
+        # classification and bboxcost.
+        cls_cost = self.cls_cost(cls_pred, gt_labels)
+
+        if self.normalize_gt:
+            normalized_gt_lanes = normalize_3dlane(gt_lanes, self.pc_range)
+        else:
+            normalized_gt_lanes = gt_lanes
+
+        # regression L1 cost
+        reg_cost = self.reg_cost(lanes_pred, normalized_gt_lanes)
+
+        # weighted sum of above two costs
+        cost = cls_cost + reg_cost
+
+        # Smoothing
+        cost = cost.detach().cpu()
+        if self.smoothing:
+            # Compute the minimum value of the reg_cost
+            min_value_of_cls_cost = (1 - self.cls_cost.alpha) * self.bias_epsilon
+            min_value_of_reg_cost = 0
+            cost_min = (
+                    self.cls_cost.weight * min_value_of_cls_cost +
+                    self.reg_cost.weight * min_value_of_reg_cost
+            )
+            inverse_sigmoid_smoothing = -torch.log(torch.tensor((1.0 / self.smoothing) - 1.0))
+            cost = cost - cost_min + inverse_sigmoid_smoothing
+
+        # 3. do Hungarian matching on CPU using linear_sum_assignment
+        if linear_sum_assignment is None:
+            raise ImportError('Please run "pip install scipy" to install scipy first.')
+        matched_row_inds, matched_col_inds = linear_sum_assignment(cost)
+        matched_row_inds = torch.from_numpy(matched_row_inds).to(lanes_pred.device)
+        matched_col_inds = torch.from_numpy(matched_col_inds).to(lanes_pred.device)
+
+        # 4. assign backgrounds and foregrounds
+        # assign all indices to backgrounds first
+        assigned_gt_inds[:] = 0
+
+        # assign foregrounds based on matching results
+        assigned_gt_inds[matched_row_inds] = matched_col_inds + 1
+        assigned_labels[matched_row_inds] = gt_labels[matched_col_inds]
+
+        matching_costs = [cost[i, j] for i, j in zip(matched_row_inds, matched_col_inds)]
+
+        assign_result = AssignResult(num_gts, assigned_gt_inds, None, labels=assigned_labels)
+        assign_result.set_extra_property("matching_costs", matching_costs)
+
+        return assign_result

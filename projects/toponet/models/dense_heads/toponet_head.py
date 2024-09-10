@@ -35,7 +35,9 @@ from projects.toponet.models.modules.sgnn_decoder import SGNNDecoderLayer
 from mmcv.cnn.bricks.registry import TRANSFORMER_LAYER
 
 import warnings
-
+from mmdet.models.losses.focal_loss import FocalLoss
+from torchvision.ops import sigmoid_focal_loss
+from torch.nn.modules.loss import BCEWithLogitsLoss
 
 @TRANSFORMER_LAYER.register_module()
 class MySGNNDecoderLayer(SGNNDecoderLayer):
@@ -510,6 +512,10 @@ class TopoNetHead(AnchorFreeHead):
         self.real_w = self.pc_range[3] - self.pc_range[0]
         self.real_h = self.pc_range[4] - self.pc_range[1]
         self.num_reg_fcs = num_reg_fcs
+
+        # for adaptive smoothing.
+        # self.bce_loss_lclc = BCEWithLogitsLoss()
+
         self._init_layers()
 
     def _init_layers(self):
@@ -801,8 +807,18 @@ class TopoNetHead(AnchorFreeHead):
         ys = pos_inds.unsqueeze(0).repeat(pos_inds.size(0), 1)
         lclc_target[xs, ys] = gt_lane_adj[pos_assigned_gt_inds][:, pos_assigned_gt_inds]
 
+        # Process lclc_target using matching_costs in assign_result
+        if "matching_costs" in assign_result._extra_properties.keys():
+            weight = torch.ones_like(lclc_pred.squeeze(-1), dtype=lclc_pred.dtype, device=lclc_pred.device)
+            matching_costs = torch.tensor(assign_result.get_extra_property('matching_costs'), device=lclc_pred.device)
+            uncertainty = 1.0 - matching_costs.sigmoid()
+            weight[xs, ys] = torch.outer(uncertainty, uncertainty)
+            lclc_target = lclc_target * weight
+        else:
+            matching_costs = None
+
         return (labels, label_weights, bbox_targets, bbox_weights, lclc_target,
-                pos_inds, neg_inds, pos_assigned_gt_inds)
+                pos_inds, neg_inds, pos_assigned_gt_inds, matching_costs)
 
     def my_get_targets(self,
                     cls_scores_list,
@@ -851,13 +867,13 @@ class TopoNetHead(AnchorFreeHead):
         ]
 
         (labels_list, label_weights_list, lanes_targets_list, lanes_weights_list, lclc_targets_list,
-            pos_inds_list, neg_inds_list, pos_assigned_gt_inds_list) = multi_apply(
+            pos_inds_list, neg_inds_list, pos_assigned_gt_inds_list, matching_costs) = multi_apply(
             self._get_target_single, cls_scores_list, lanes_preds_list, lclc_preds_list,
             gt_labels_list, gt_lanes_list, gt_lane_adj_list, gt_bboxes_ignore_list)
         num_total_pos = sum((inds.numel() for inds in pos_inds_list))
         num_total_neg = sum((inds.numel() for inds in neg_inds_list))
         assign_result = dict(
-            pos_inds=pos_inds_list, neg_inds=neg_inds_list, pos_assigned_gt_inds=pos_assigned_gt_inds_list
+            pos_inds=pos_inds_list, neg_inds=neg_inds_list, pos_assigned_gt_inds=pos_assigned_gt_inds_list, matching_costs=matching_costs
         )
         return (labels_list, label_weights_list, lanes_targets_list, lanes_weights_list, lclc_targets_list,
                 num_total_pos, num_total_neg, assign_result)
@@ -922,7 +938,7 @@ class TopoNetHead(AnchorFreeHead):
         return loss_cls, loss_bbox
 
 
-
+    # TODO: use_torch_focal_loss is a temporary fix. replace it.
     def loss_single(self,
                     cls_scores,
                     lanes_preds,
@@ -934,14 +950,15 @@ class TopoNetHead(AnchorFreeHead):
                     gt_lane_adj_list,
                     gt_lane_lcte_adj_list,
                     layer_index,
-                    gt_bboxes_ignore_list=None):
+                    gt_bboxes_ignore_list=None,
+                    use_torch_focal_loss=False):
 
         num_imgs = cls_scores.size(0)
         cls_scores_list = [cls_scores[i] for i in range(num_imgs)]
         lanes_preds_list = [lanes_preds[i] for i in range(num_imgs)]
         lclc_preds_list = [lclc_preds[i] for i in range(num_imgs)]
 
-        cls_reg_targets = self.get_targets(cls_scores_list, lanes_preds_list, lclc_preds_list, 
+        cls_reg_targets = self.get_targets(cls_scores_list, lanes_preds_list, lclc_preds_list,
                                            gt_lanes_list, gt_labels_list, gt_lane_adj_list,
                                            gt_bboxes_ignore_list)
         (labels_list, label_weights_list, bbox_targets_list, bbox_weights_list, lclc_targets_list,
@@ -981,19 +998,25 @@ class TopoNetHead(AnchorFreeHead):
             bbox_weights[isnotnan, :self.code_size],
             avg_factor=num_total_pos)
 
-        # lclc loss
-        lclc_targets = 1 - lclc_targets.view(-1).long()
-        lclc_preds = lclc_preds.view(-1, 1)
-        loss_lclc = self.lclc_branches[layer_index].loss_rel(lclc_preds, lclc_targets)
+        # lclc loss.
+        if use_torch_focal_loss:
 
-        loss_lcte = self.lcte_branches[layer_index].loss(lcte_preds, gt_lane_lcte_adj_list, assign_result, te_assign_result)['loss_rel']
+            loss_lclc = self.lclc_branches[layer_index].loss_rel.loss_weight * sigmoid_focal_loss(lclc_preds.squeeze(0).squeeze(-1), lclc_targets, alpha=self.lclc_branches[layer_index].loss_rel.alpha, gamma=self.lclc_branches[layer_index].loss_rel.gamma, reduction='mean')
+            # TODO: modify loss_lcte to incoporate uncertainty
+            loss_lcte = self.lcte_branches[layer_index].loss(lcte_preds, gt_lane_lcte_adj_list, assign_result, te_assign_result)['loss_rel']
+
+        else:
+
+            loss_lclc = self.lclc_branches[layer_index].loss_rel(lclc_preds.view(-1, 1), 1 - lclc_targets.view(-1).long())
+            loss_lcte = self.lcte_branches[layer_index].loss(lcte_preds, gt_lane_lcte_adj_list, assign_result, te_assign_result)['loss_rel']
+
 
         if digit_version(TORCH_VERSION) >= digit_version('1.8'):
             loss_cls = torch.nan_to_num(loss_cls)
             loss_bbox = torch.nan_to_num(loss_bbox)
         return loss_cls, loss_bbox, loss_lclc, loss_lcte
 
-
+    # TODO: use_torch_focal_loss is a temporary fix. replace it.
     @force_fp32(apply_to=('preds_dicts'))
     def my_loss(self,
                 preds_dicts,
@@ -1051,6 +1074,7 @@ class TopoNetHead(AnchorFreeHead):
                 gt_lane_adj,
                 gt_lane_lcte_adj,
                 layer_index[-1],
+                use_torch_focal_loss=True,
             )
             # add losses from the last layer
             losses_cls.append(losses_cls_final)

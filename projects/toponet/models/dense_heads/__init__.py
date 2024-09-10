@@ -3,3 +3,4 @@ from .deformable_detr_head import CustomDeformableDETRHead
 from .relationship_head import SingleLayerRelationshipHead
 from .MyNN_MultiheadAttention import MyNN_MultiheadAttention
 from .MyMultiheadAttention import MyMultiheadAttention
+from .my_matcher import MyHungarianAssigner

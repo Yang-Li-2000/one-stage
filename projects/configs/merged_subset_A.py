@@ -236,13 +236,13 @@ model = dict(
     train_cfg=dict(
         bbox=dict(
             assigner=dict(
-                type='HungarianAssigner',
+                type='MyHungarianAssigner',
                 cls_cost=dict(type='FocalLossCost', weight=1.0),
                 reg_cost=dict(type='BBoxL1Cost', weight=2.5, box_format='xywh'),
                 iou_cost=dict(type='IoUCost', iou_mode='giou', weight=1.0))),
         lane=dict(
             assigner=dict(
-                type='LaneHungarianAssigner3D',
+                type='MyLaneHungarianAssigner3D',
                 cls_cost=dict(type='FocalLossCost', weight=1.5),
                 reg_cost=dict(type='LaneL1Cost', weight=0.025),
                 pc_range=point_cloud_range))))
