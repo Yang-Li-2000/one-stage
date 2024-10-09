@@ -70,9 +70,13 @@ class MyDetrTransformerDecoderLayer(DetrTransformerDecoderLayer):
         if attn_masks is not None or query_key_padding_mask is not None:
             raise NotImplementedError()
 
+        if query_cl is not None:
+            query = torch.cat([query_te, query_cl], dim=0)
+            query_pos = torch.cat([query_pos_te, query_pos_cl], dim=0)
+        else:
+            query = query_te
+            query_pos = query_pos_te
 
-        query = torch.cat([query_te, query_cl], dim=0)
-        query_pos = torch.cat([query_pos_te, query_pos_cl], dim=0)
 
         identity = query
 

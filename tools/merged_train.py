@@ -280,8 +280,8 @@ def main():
     model.init_weights()
 
     # Remove unused layers
-    for i in range(6):
-        model.pts_bbox_head.transformer.decoder.layers[i].attentions[0] = None
+    # for i in range(6):
+    #     model.pts_bbox_head.transformer.decoder.layers[i].attentions[0] = None
 
     model.pts_bbox_head.te_embed_branches = None
 

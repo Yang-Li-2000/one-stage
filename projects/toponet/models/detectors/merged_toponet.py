@@ -79,14 +79,40 @@ class MergedTopoNet(MVXTwoStageDetector):
         self.nq_cl = self.pts_bbox_head.num_query
 
         # projection layers
-        self.proj_q = nn.ModuleList(
+        # self.proj_q = nn.ModuleList(
+        #     [
+        #         nn.Linear(embed_dims, embed_dims)
+        #         for i in range(num_decoder_layers)
+        #     ]
+        # )
+        #
+        # self.proj_k = nn.ModuleList(
+        #     [
+        #         nn.Linear(embed_dims, embed_dims)
+        #         for i in range(num_decoder_layers)
+        #     ]
+        # )
+        self.proj_q_te = nn.ModuleList(
             [
                 nn.Linear(embed_dims, embed_dims)
                 for i in range(num_decoder_layers)
             ]
         )
 
-        self.proj_k = nn.ModuleList(
+        self.proj_k_te = nn.ModuleList(
+            [
+                nn.Linear(embed_dims, embed_dims)
+                for i in range(num_decoder_layers)
+            ]
+        )
+        self.proj_q_cl = nn.ModuleList(
+            [
+                nn.Linear(embed_dims, embed_dims)
+                for i in range(num_decoder_layers)
+            ]
+        )
+
+        self.proj_k_cl = nn.ModuleList(
             [
                 nn.Linear(embed_dims, embed_dims)
                 for i in range(num_decoder_layers)
@@ -94,8 +120,14 @@ class MergedTopoNet(MVXTwoStageDetector):
         )
 
         # final projection layers
-        self.final_sub_proj = nn.Linear(embed_dims, embed_dims)
-        self.final_obj_proj = nn.Linear(embed_dims, embed_dims)
+        # self.final_sub_proj = nn.Linear(embed_dims, embed_dims)
+        # self.final_obj_proj = nn.Linear(embed_dims, embed_dims)
+        # clcl
+        self.final_sub_proj_clcl = nn.Linear(embed_dims, embed_dims)
+        self.final_obj_proj_clcl = nn.Linear(embed_dims, embed_dims)
+        # tecl
+        self.final_sub_proj_tecl = nn.Linear(embed_dims, embed_dims)
+        self.final_obj_proj_tecl = nn.Linear(embed_dims, embed_dims)
 
         # relation predictor gate
         self.rel_predictor_gate_tecl = nn.Linear(2 * embed_dims, 1)
@@ -114,6 +146,51 @@ class MergedTopoNet(MVXTwoStageDetector):
             output_dim=1,
             num_layers=3,
         )
+
+        # intermediate gates and connectivity layers
+        # clcl
+        self.intermediate_sub_proj_clcl = []
+        self.intermediate_obj_proj_clcl = []
+        self.intermediate_sub_proj_tecl = []
+        self.intermediate_obj_proj_tecl = []
+        for i in range(5):
+            self.intermediate_sub_proj_clcl.append(nn.Linear(embed_dims, embed_dims))
+            self.intermediate_obj_proj_clcl.append(nn.Linear(embed_dims, embed_dims))
+            self.intermediate_sub_proj_tecl.append(nn.Linear(embed_dims, embed_dims))
+            self.intermediate_obj_proj_tecl.append(nn.Linear(embed_dims, embed_dims))
+        self.intermediate_sub_proj_clcl = nn.ModuleList(self.intermediate_sub_proj_clcl)
+        self.intermediate_obj_proj_clcl = nn.ModuleList(self.intermediate_obj_proj_clcl)
+        self.intermediate_sub_proj_tecl = nn.ModuleList(self.intermediate_sub_proj_tecl)
+        self.intermediate_obj_proj_tecl = nn.ModuleList(self.intermediate_obj_proj_tecl)
+
+
+        self.intermediate_rel_predictor_gate_tecl = []
+        self.intermediate_rel_predictor_gate_clcl = []
+        for i in range(5):
+            self.intermediate_rel_predictor_gate_tecl.append(nn.Linear(2 * embed_dims, 1))
+            self.intermediate_rel_predictor_gate_clcl.append(nn.Linear(2 * embed_dims, 1))
+        self.intermediate_rel_predictor_gate_tecl = nn.ModuleList(self.intermediate_rel_predictor_gate_tecl)
+        self.intermediate_rel_predictor_gate_clcl = nn.ModuleList(self.intermediate_rel_predictor_gate_clcl)
+
+
+        self.intermediate_connectivity_layer_tecl = []
+        self.intermediate_connectivity_layer_clcl = []
+        for i in range(5):
+            self.intermediate_connectivity_layer_tecl.append(DeformableDetrMLPPredictionHead(
+            input_dim=2*embed_dims,
+            hidden_dim=embed_dims,
+            output_dim=1,
+            num_layers=3,
+            ))
+            self.intermediate_connectivity_layer_clcl.append(DeformableDetrMLPPredictionHead(
+            input_dim=2 * embed_dims,
+            hidden_dim=embed_dims,
+            output_dim=1,
+            num_layers=3,
+            ))
+        self.intermediate_connectivity_layer_tecl = nn.ModuleList(self.intermediate_connectivity_layer_tecl)
+        self.intermediate_connectivity_layer_clcl = nn.ModuleList(self.intermediate_connectivity_layer_clcl)
+
 
 
     def extract_img_feat(self, img, img_metas, len_queue=None):
@@ -236,8 +313,11 @@ class MergedTopoNet(MVXTwoStageDetector):
         intermediate_reference_points_cl = []
 
         # for relation prediction
-        decoder_attention_queries = []
-        decoder_attention_keys = []
+        decoder_attention_queries_te = []
+        decoder_attention_keys_te = []
+        decoder_attention_queries_cl = []
+        decoder_attention_keys_cl = []
+
 
         # looping over each decoder layer
         for lid in range(num_decoder_layers):
@@ -253,16 +333,25 @@ class MergedTopoNet(MVXTwoStageDetector):
             reference_points_input_cl = reference_points_cl[..., :2].unsqueeze(2)
 
             # 1. self-attention after concatenating queries
-            query_te, query_cl, decoder_self_attention_q_te, decoder_self_attention_q_cl, decoder_self_attention_k_te, decoder_self_attention_k_cl = \
+            # te
+            query_te, _, decoder_self_attention_q_te, _, decoder_self_attention_k_te, _ = \
                 self.bbox_head.transformer.decoder.layers[
-                    lid].forward_self_attention(query_te, query_cl,
+                    lid].forward_self_attention(query_te, None,
                                                 query_pos_te=query_pos_te,
+                                                query_pos_cl=None)
+            # cl
+            _, query_cl, _, decoder_self_attention_q_cl, _, decoder_self_attention_k_cl = \
+                self.pts_bbox_head.transformer.decoder.layers[
+                    lid].forward_self_attention(None, query_cl,
+                                                query_pos_te=None,
                                                 query_pos_cl=query_pos_cl)
 
-            concatenated_decoder_self_attention_q = torch.cat([decoder_self_attention_q_te, decoder_self_attention_q_cl], dim=0)
-            concatenated_decoder_self_attention_k = torch.cat([decoder_self_attention_k_te, decoder_self_attention_k_cl], dim=0)
-            decoder_attention_queries.append(concatenated_decoder_self_attention_q)
-            decoder_attention_keys.append(concatenated_decoder_self_attention_k)
+            # Store q and k of te and cl in different lists
+            decoder_attention_queries_te.append(decoder_self_attention_q_te)
+            decoder_attention_keys_te.append(decoder_self_attention_k_te)
+            decoder_attention_queries_cl.append(decoder_self_attention_q_cl)
+            decoder_attention_keys_cl.append(decoder_self_attention_k_cl)
+
 
             # 2. remaining layers in current decoder layer
             query_te = self.bbox_head.transformer.decoder.layers[
@@ -327,19 +416,35 @@ class MergedTopoNet(MVXTwoStageDetector):
         unscaling = self.head_dim ** 0.5
 
         # Unscaling & stacking attention queries
-        projected_q = []
-        for q, proj_q in zip(decoder_attention_queries, self.proj_q):
-            projected_q.append(
-                proj_q(q.permute(1, 0, 2) * unscaling))
-        decoder_attention_queries = torch.stack(projected_q, -2)  # [bsz, num_object_queries, num_layers, d_model]
-        del projected_q
+        projected_q_te = []
+        for q, proj_q in zip(decoder_attention_queries_te, self.proj_q_te):
+            projected_q_te.append(proj_q(q.permute(1, 0, 2) * unscaling))
+        decoder_attention_queries_te = torch.stack(projected_q_te, -2)  # [bsz, num_object_queries, num_layers, d_model]
+        del projected_q_te
 
         # Stacking attention keys
-        projected_k = []
-        for k, proj_k in zip(decoder_attention_keys, self.proj_k):
-            projected_k.append(proj_k(k.permute(1, 0, 2)))
-        decoder_attention_keys = torch.stack(projected_k, -2)  # [bsz, num_object_queries, num_layers, d_model]
-        del projected_k
+        projected_k_te = []
+        for k, proj_k in zip(decoder_attention_keys_te, self.proj_k_te):
+            projected_k_te.append(proj_k(k.permute(1, 0, 2)))
+        decoder_attention_keys_te = torch.stack(projected_k_te, -2)  # [bsz, num_object_queries, num_layers, d_model]
+        del projected_k_te
+
+        projected_q_cl = []
+        for q, proj_q in zip(decoder_attention_queries_cl, self.proj_q_cl):
+            projected_q_cl.append(proj_q(q.permute(1, 0, 2) * unscaling))
+        decoder_attention_queries_cl = torch.stack(projected_q_cl, -2)  # [bsz, num_object_queries, num_layers, d_model]
+        del projected_q_cl
+
+        # Stacking attention keys
+        projected_k_cl = []
+        for k, proj_k in zip(decoder_attention_keys_cl, self.proj_k_cl):
+            projected_k_cl.append(proj_k(k.permute(1, 0, 2)))
+        decoder_attention_keys_cl = torch.stack(projected_k_cl, -2)  # [bsz, num_object_queries, num_layers, d_model]
+        del projected_k_cl
+
+        # concat before pairwise concat
+        decoder_attention_queries = torch.cat([decoder_attention_queries_te, decoder_attention_queries_cl], dim=1)
+        decoder_attention_keys = torch.cat([decoder_attention_keys_te, decoder_attention_keys_cl], dim=1)
 
         # Pairwise concatenation
         decoder_attention_queries = decoder_attention_queries.unsqueeze(
@@ -356,35 +461,156 @@ class MergedTopoNet(MVXTwoStageDetector):
         )  # [bsz, num_object_queries, num_object_queries, num_layers, 2*d_model]
         del decoder_attention_queries, decoder_attention_keys
 
-        # Use final hidden representations
-        sequence_output = torch.cat([query_te, query_cl], dim=0).permute(1, 0, 2)
-        subject_output = (
-            self.final_sub_proj(sequence_output)
+        # add final hidden represetations separatly for tecl and clcl.
+        #  Specifically, clcl should only receive query_cl while tecl receives both
+        # clcl
+        sequence_output_clcl = query_cl.permute(1, 0,2)
+        subject_output_clcl = (
+            self.final_sub_proj_clcl(sequence_output_clcl)
             .unsqueeze(2)
-            .repeat(1, 1, num_object_queries, 1)
+            .repeat(1, 1, self.nq_cl, 1)
         )
-        object_output = (
-            self.final_obj_proj(sequence_output)
+        object_output_clcl = (
+            self.final_obj_proj_clcl(sequence_output_clcl)
             .unsqueeze(1)
-            .repeat(1, num_object_queries, 1, 1)
+            .repeat(1, self.nq_cl, 1, 1)
         )
-        del sequence_output
-        relation_source = torch.cat(
+        del sequence_output_clcl
+        relation_source_clcl = torch.cat(
             [
-                relation_source,
-                torch.cat([subject_output, object_output], dim=-1).unsqueeze(
+                relation_source[:, -self.nq_cl:, -self.nq_cl:],
+                torch.cat([subject_output_clcl, object_output_clcl], dim=-1).unsqueeze(
                     -2),
             ],
             dim=-2,
         )
-        del subject_output, object_output
+        del subject_output_clcl, object_output_clcl
+
+        # tecl
+        sequence_output_tecl = torch.cat([query_te, query_cl], dim=0).permute(1, 0, 2)
+        subject_output_tecl = (
+            self.final_sub_proj_tecl(sequence_output_tecl)
+            .unsqueeze(2)
+            .repeat(1, 1, num_object_queries, 1)
+        )
+        object_output_tecl = (
+            self.final_obj_proj_tecl(sequence_output_tecl)
+            .unsqueeze(1)
+            .repeat(1, num_object_queries, 1, 1)
+        )
+        del sequence_output_tecl
+        relation_source_tecl = torch.cat(
+            [
+                relation_source[:, :, :],
+                torch.cat([subject_output_tecl, object_output_tecl], dim=-1).unsqueeze(
+                    -2),
+            ],
+            dim=-2,
+        )
+        del subject_output_tecl, object_output_tecl
+
+        # intermediate gated sum and connectivity
+        list_intermediate_pred_connectivity_tecl = []
+        list_intermediate_pred_connectivity_clcl = []
+        if self.bbox_head.transformer.decoder.return_intermediate and self.pts_bbox_head.transformer.decoder.return_intermediate:
+            for lid in range(5):
+                # intermediate clcl
+                intermediate_sequence_output_clcl = intermediate_cl[
+                    lid].permute(1, 0, 2)
+                intermediate_subject_output_clcl = (
+                    self.intermediate_sub_proj_clcl[lid](
+                        intermediate_sequence_output_clcl)
+                    .unsqueeze(2)
+                    .repeat(1, 1, self.nq_cl, 1)
+                )
+                intermediate_object_output_clcl = (
+                    self.intermediate_obj_proj_clcl[lid](
+                        intermediate_sequence_output_clcl)
+                    .unsqueeze(1)
+                    .repeat(1, self.nq_cl, 1, 1)
+                )
+                del intermediate_sequence_output_clcl
+                intermediate_relation_source_clcl = torch.cat(
+                    [
+                        relation_source[:, -self.nq_cl:, -self.nq_cl:,
+                        :lid + 1],
+                        torch.cat([intermediate_subject_output_clcl,
+                                   intermediate_object_output_clcl],
+                                  dim=-1).unsqueeze(
+                            -2),
+                    ],
+                    dim=-2,
+                )
+                del intermediate_subject_output_clcl, intermediate_object_output_clcl
+
+                # intermediate tecl
+                intermediate_sequence_output_tecl = torch.cat(
+                    [intermediate_te[lid], intermediate_cl[lid]],
+                    dim=0).permute(1, 0, 2)
+                intermediate_subject_output_tecl = (
+                    self.intermediate_sub_proj_tecl[lid](
+                        intermediate_sequence_output_tecl)
+                    .unsqueeze(2)
+                    .repeat(1, 1, num_object_queries, 1)
+                )
+                intermediate_object_output_tecl = (
+                    self.intermediate_obj_proj_tecl[lid](
+                        intermediate_sequence_output_tecl)
+                    .unsqueeze(1)
+                    .repeat(1, num_object_queries, 1, 1)
+                )
+                del intermediate_sequence_output_tecl
+                intermediate_relation_source_tecl = torch.cat(
+                    [
+                        relation_source[:, :, :, :lid + 1],
+                        torch.cat([intermediate_subject_output_tecl,
+                                   intermediate_object_output_tecl],
+                                  dim=-1).unsqueeze(
+                            -2),
+                    ],
+                    dim=-2,
+                )
+                del intermediate_subject_output_tecl, intermediate_object_output_tecl
+
+                # gated sum
+                intermediate_rel_gate_clcl = torch.sigmoid(
+                    self.intermediate_rel_predictor_gate_clcl[lid](
+                        intermediate_relation_source_clcl))
+                intermediate_gated_relation_source_clcl = torch.mul(
+                    intermediate_rel_gate_clcl,
+                    intermediate_relation_source_clcl).sum(dim=-2)
+
+                intermediate_relation_source_tecl = intermediate_relation_source_tecl[
+                                                    :, self.nq_te:, :self.nq_te]
+                intermediate_rel_gate_tecl = torch.sigmoid(
+                    self.intermediate_rel_predictor_gate_tecl[lid](
+                        intermediate_relation_source_tecl))
+                intermediate_gated_relation_source_tecl = torch.mul(
+                    intermediate_rel_gate_tecl,
+                    intermediate_relation_source_tecl).sum(dim=-2)
+
+                # connectivity
+                intermediate_pred_connectivity_tecl = \
+                self.intermediate_connectivity_layer_tecl[lid](
+                    intermediate_gated_relation_source_tecl)
+                intermediate_pred_connectivity_clcl = \
+                self.intermediate_connectivity_layer_clcl[lid](
+                    intermediate_gated_relation_source_clcl)
+                del intermediate_relation_source_tecl
+                del intermediate_gated_relation_source_clcl
+                del intermediate_rel_gate_tecl
+                del intermediate_rel_gate_clcl
+
+                list_intermediate_pred_connectivity_tecl.append(
+                    intermediate_pred_connectivity_tecl)
+                list_intermediate_pred_connectivity_clcl.append(
+                    intermediate_pred_connectivity_clcl)
 
         # Gated sum
-        relation_source_tecl = relation_source[:, self.nq_te:, :self.nq_te]
+        relation_source_tecl = relation_source_tecl[:, self.nq_te:, :self.nq_te]
         rel_gate_tecl = torch.sigmoid(self.rel_predictor_gate_tecl(relation_source_tecl))
         gated_relation_source_tecl = torch.mul(rel_gate_tecl, relation_source_tecl).sum(dim=-2)
 
-        relation_source_clcl = relation_source[:, self.nq_te:, self.nq_te:]
         rel_gate_clcl = torch.sigmoid(self.rel_predictor_gate_clcl(relation_source_clcl))
         gated_relation_source_clcl = torch.mul(rel_gate_clcl, relation_source_clcl).sum(dim=-2)
 
@@ -403,8 +629,16 @@ class MergedTopoNet(MVXTwoStageDetector):
         outputs_cl_transformer_last_half = self.pts_bbox_head.transformer.forward_second_half(*outputs_cl_decoder, outputs_cl_transformer_first_half['init_reference_out'])
         outs = self.pts_bbox_head.forward_second_half(outputs_cl_transformer_last_half)
 
-        outs['all_lclc_preds'] = [pred_connectivity_clcl]
-        outs['all_lcte_preds'] = [pred_connectivity_tecl]
+        # add intermediate relation predictions to list
+        if self.bbox_head.transformer.decoder.return_intermediate and self.pts_bbox_head.transformer.decoder.return_intermediate:
+            list_intermediate_pred_connectivity_clcl.append(pred_connectivity_clcl)
+            list_intermediate_pred_connectivity_tecl.append(pred_connectivity_tecl)
+            outs['all_lclc_preds'] = list_intermediate_pred_connectivity_clcl
+            outs['all_lcte_preds'] = list_intermediate_pred_connectivity_tecl
+        else:
+            outs['all_lclc_preds'] = [pred_connectivity_clcl]
+            outs['all_lcte_preds'] = [pred_connectivity_tecl]
+
 
         return bbox_outs, outs, bev_feats
 
@@ -462,7 +696,12 @@ class MergedTopoNet(MVXTwoStageDetector):
 
         losses = dict()
         loss_inputs = [outs, gt_lanes_3d, gt_lane_labels_3d, gt_lane_adj, gt_lane_lcte_adj, te_assign_result]
-        lane_losses = self.pts_bbox_head.my_loss(*loss_inputs, img_metas=img_metas, pred_connectivity_tecl=outs['all_lcte_preds'][-1], pred_connectivity_clcl=outs['all_lclc_preds'][-1])
+
+        if self.bbox_head.transformer.decoder.return_intermediate and self.pts_bbox_head.transformer.decoder.return_intermediate:
+            lane_losses = self.pts_bbox_head.my_loss_with_intermediate_relations(*loss_inputs, img_metas=img_metas, pred_connectivity_tecl=outs['all_lcte_preds'], pred_connectivity_clcl=outs['all_lclc_preds'])
+        else:
+            lane_losses = self.pts_bbox_head.my_loss(*loss_inputs, img_metas=img_metas, pred_connectivity_tecl=outs['all_lcte_preds'][-1], pred_connectivity_clcl=outs['all_lclc_preds'][-1])
+
         for loss in lane_losses:
             losses['lane_head.' + loss] = lane_losses[loss]
 
