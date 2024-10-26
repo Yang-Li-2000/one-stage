@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=6 python -m pdb tools/train.py projects/configs/toponet_r50_8x1_24e_olv2_subset_A.py --work-dir work_dirs/toponet --deterministic --autoscale-lr
