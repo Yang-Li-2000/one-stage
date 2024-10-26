@@ -592,10 +592,7 @@ class MergedTopoNet(MVXTwoStageDetector):
         losses = dict()
         loss_inputs = [outs, gt_lanes_3d, gt_lane_labels_3d, gt_lane_adj, gt_lane_lcte_adj, te_assign_result]
 
-        if self.bbox_head.transformer.decoder.return_intermediate and self.pts_bbox_head.transformer.decoder.return_intermediate:
-            lane_losses = self.pts_bbox_head.my_loss_with_intermediate_relations(*loss_inputs, img_metas=img_metas, pred_connectivity_tecl=outs['all_lcte_preds'], pred_connectivity_clcl=outs['all_lclc_preds'])
-        else:
-            lane_losses = self.pts_bbox_head.my_loss(*loss_inputs, img_metas=img_metas, pred_connectivity_tecl=outs['all_lcte_preds'][-1], pred_connectivity_clcl=outs['all_lclc_preds'][-1])
+        lane_losses = self.pts_bbox_head.my_loss(*loss_inputs, img_metas=img_metas, pred_connectivity_tecl=outs['all_lcte_preds'][-1], pred_connectivity_clcl=outs['all_lclc_preds'][-1])
 
         for loss in lane_losses:
             losses['lane_head.' + loss] = lane_losses[loss]
