@@ -509,103 +509,6 @@ class MergedTopoNet(MVXTwoStageDetector):
         )
         del subject_output_tecl, object_output_tecl
 
-        # intermediate gated sum and connectivity
-        list_intermediate_pred_connectivity_tecl = []
-        list_intermediate_pred_connectivity_clcl = []
-        if self.bbox_head.transformer.decoder.return_intermediate and self.pts_bbox_head.transformer.decoder.return_intermediate:
-            for lid in range(5):
-                # intermediate clcl
-                intermediate_sequence_output_clcl = intermediate_cl[
-                    lid].permute(1, 0, 2)
-                intermediate_subject_output_clcl = (
-                    self.intermediate_sub_proj_clcl[lid](
-                        intermediate_sequence_output_clcl)
-                    .unsqueeze(2)
-                    .repeat(1, 1, self.nq_cl, 1)
-                )
-                intermediate_object_output_clcl = (
-                    self.intermediate_obj_proj_clcl[lid](
-                        intermediate_sequence_output_clcl)
-                    .unsqueeze(1)
-                    .repeat(1, self.nq_cl, 1, 1)
-                )
-                del intermediate_sequence_output_clcl
-                intermediate_relation_source_clcl = torch.cat(
-                    [
-                        relation_source[:, -self.nq_cl:, -self.nq_cl:,
-                        :lid + 1],
-                        torch.cat([intermediate_subject_output_clcl,
-                                   intermediate_object_output_clcl],
-                                  dim=-1).unsqueeze(
-                            -2),
-                    ],
-                    dim=-2,
-                )
-                del intermediate_subject_output_clcl, intermediate_object_output_clcl
-
-                # intermediate tecl
-                intermediate_sequence_output_tecl = torch.cat(
-                    [intermediate_te[lid], intermediate_cl[lid]],
-                    dim=0).permute(1, 0, 2)
-                intermediate_subject_output_tecl = (
-                    self.intermediate_sub_proj_tecl[lid](
-                        intermediate_sequence_output_tecl)
-                    .unsqueeze(2)
-                    .repeat(1, 1, num_object_queries, 1)
-                )
-                intermediate_object_output_tecl = (
-                    self.intermediate_obj_proj_tecl[lid](
-                        intermediate_sequence_output_tecl)
-                    .unsqueeze(1)
-                    .repeat(1, num_object_queries, 1, 1)
-                )
-                del intermediate_sequence_output_tecl
-                intermediate_relation_source_tecl = torch.cat(
-                    [
-                        relation_source[:, :, :, :lid + 1],
-                        torch.cat([intermediate_subject_output_tecl,
-                                   intermediate_object_output_tecl],
-                                  dim=-1).unsqueeze(
-                            -2),
-                    ],
-                    dim=-2,
-                )
-                del intermediate_subject_output_tecl, intermediate_object_output_tecl
-
-                # gated sum
-                intermediate_rel_gate_clcl = torch.sigmoid(
-                    self.intermediate_rel_predictor_gate_clcl[lid](
-                        intermediate_relation_source_clcl))
-                intermediate_gated_relation_source_clcl = torch.mul(
-                    intermediate_rel_gate_clcl,
-                    intermediate_relation_source_clcl).sum(dim=-2)
-
-                intermediate_relation_source_tecl = intermediate_relation_source_tecl[
-                                                    :, self.nq_te:, :self.nq_te]
-                intermediate_rel_gate_tecl = torch.sigmoid(
-                    self.intermediate_rel_predictor_gate_tecl[lid](
-                        intermediate_relation_source_tecl))
-                intermediate_gated_relation_source_tecl = torch.mul(
-                    intermediate_rel_gate_tecl,
-                    intermediate_relation_source_tecl).sum(dim=-2)
-
-                # connectivity
-                intermediate_pred_connectivity_tecl = \
-                self.intermediate_connectivity_layer_tecl[lid](
-                    intermediate_gated_relation_source_tecl)
-                intermediate_pred_connectivity_clcl = \
-                self.intermediate_connectivity_layer_clcl[lid](
-                    intermediate_gated_relation_source_clcl)
-                del intermediate_relation_source_tecl
-                del intermediate_gated_relation_source_clcl
-                del intermediate_rel_gate_tecl
-                del intermediate_rel_gate_clcl
-
-                list_intermediate_pred_connectivity_tecl.append(
-                    intermediate_pred_connectivity_tecl)
-                list_intermediate_pred_connectivity_clcl.append(
-                    intermediate_pred_connectivity_clcl)
-
         # Gated sum
         relation_source_tecl = relation_source_tecl[:, self.nq_te:, :self.nq_te]
         rel_gate_tecl = torch.sigmoid(self.rel_predictor_gate_tecl(relation_source_tecl))
@@ -629,16 +532,8 @@ class MergedTopoNet(MVXTwoStageDetector):
         outputs_cl_transformer_last_half = self.pts_bbox_head.transformer.forward_second_half(*outputs_cl_decoder, outputs_cl_transformer_first_half['init_reference_out'])
         outs = self.pts_bbox_head.forward_second_half(outputs_cl_transformer_last_half)
 
-        # add intermediate relation predictions to list
-        if self.bbox_head.transformer.decoder.return_intermediate and self.pts_bbox_head.transformer.decoder.return_intermediate:
-            list_intermediate_pred_connectivity_clcl.append(pred_connectivity_clcl)
-            list_intermediate_pred_connectivity_tecl.append(pred_connectivity_tecl)
-            outs['all_lclc_preds'] = list_intermediate_pred_connectivity_clcl
-            outs['all_lcte_preds'] = list_intermediate_pred_connectivity_tecl
-        else:
-            outs['all_lclc_preds'] = [pred_connectivity_clcl]
-            outs['all_lcte_preds'] = [pred_connectivity_tecl]
-
+        outs['all_lclc_preds'] = [pred_connectivity_clcl]
+        outs['all_lcte_preds'] = [pred_connectivity_tecl]
 
         return bbox_outs, outs, bev_feats
 
