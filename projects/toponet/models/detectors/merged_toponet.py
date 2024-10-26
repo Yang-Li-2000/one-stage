@@ -79,19 +79,6 @@ class MergedTopoNet(MVXTwoStageDetector):
         self.nq_cl = self.pts_bbox_head.num_query
 
         # projection layers
-        # self.proj_q = nn.ModuleList(
-        #     [
-        #         nn.Linear(embed_dims, embed_dims)
-        #         for i in range(num_decoder_layers)
-        #     ]
-        # )
-        #
-        # self.proj_k = nn.ModuleList(
-        #     [
-        #         nn.Linear(embed_dims, embed_dims)
-        #         for i in range(num_decoder_layers)
-        #     ]
-        # )
         self.proj_q_te = nn.ModuleList(
             [
                 nn.Linear(embed_dims, embed_dims)
@@ -146,52 +133,6 @@ class MergedTopoNet(MVXTwoStageDetector):
             output_dim=1,
             num_layers=3,
         )
-
-        # intermediate gates and connectivity layers
-        # clcl
-        self.intermediate_sub_proj_clcl = []
-        self.intermediate_obj_proj_clcl = []
-        self.intermediate_sub_proj_tecl = []
-        self.intermediate_obj_proj_tecl = []
-        for i in range(5):
-            self.intermediate_sub_proj_clcl.append(nn.Linear(embed_dims, embed_dims))
-            self.intermediate_obj_proj_clcl.append(nn.Linear(embed_dims, embed_dims))
-            self.intermediate_sub_proj_tecl.append(nn.Linear(embed_dims, embed_dims))
-            self.intermediate_obj_proj_tecl.append(nn.Linear(embed_dims, embed_dims))
-        self.intermediate_sub_proj_clcl = nn.ModuleList(self.intermediate_sub_proj_clcl)
-        self.intermediate_obj_proj_clcl = nn.ModuleList(self.intermediate_obj_proj_clcl)
-        self.intermediate_sub_proj_tecl = nn.ModuleList(self.intermediate_sub_proj_tecl)
-        self.intermediate_obj_proj_tecl = nn.ModuleList(self.intermediate_obj_proj_tecl)
-
-
-        self.intermediate_rel_predictor_gate_tecl = []
-        self.intermediate_rel_predictor_gate_clcl = []
-        for i in range(5):
-            self.intermediate_rel_predictor_gate_tecl.append(nn.Linear(2 * embed_dims, 1))
-            self.intermediate_rel_predictor_gate_clcl.append(nn.Linear(2 * embed_dims, 1))
-        self.intermediate_rel_predictor_gate_tecl = nn.ModuleList(self.intermediate_rel_predictor_gate_tecl)
-        self.intermediate_rel_predictor_gate_clcl = nn.ModuleList(self.intermediate_rel_predictor_gate_clcl)
-
-
-        self.intermediate_connectivity_layer_tecl = []
-        self.intermediate_connectivity_layer_clcl = []
-        for i in range(5):
-            self.intermediate_connectivity_layer_tecl.append(DeformableDetrMLPPredictionHead(
-            input_dim=2*embed_dims,
-            hidden_dim=embed_dims,
-            output_dim=1,
-            num_layers=3,
-            ))
-            self.intermediate_connectivity_layer_clcl.append(DeformableDetrMLPPredictionHead(
-            input_dim=2 * embed_dims,
-            hidden_dim=embed_dims,
-            output_dim=1,
-            num_layers=3,
-            ))
-        self.intermediate_connectivity_layer_tecl = nn.ModuleList(self.intermediate_connectivity_layer_tecl)
-        self.intermediate_connectivity_layer_clcl = nn.ModuleList(self.intermediate_connectivity_layer_clcl)
-
-
 
     def extract_img_feat(self, img, img_metas, len_queue=None):
         """Extract features of images."""
