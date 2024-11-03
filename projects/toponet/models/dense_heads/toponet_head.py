@@ -36,6 +36,9 @@ from mmcv.cnn.bricks.registry import TRANSFORMER_LAYER
 
 import warnings
 
+from mmcv.cnn.bricks.transformer import MultiheadAttention
+import torch.nn.functional as F
+
 
 @TRANSFORMER_LAYER.register_module()
 class MySGNNDecoderLayer(SGNNDecoderLayer):
@@ -141,7 +144,7 @@ class MySGNNDecoderLayer(SGNNDecoderLayer):
             elif layer == 'norm':
                 query = self.norms[norm_index](query)
                 norm_index += 1
-
+            # TODO: here the value if bev_embed ([20000, 1, 256])
             elif layer == 'cross_attn':
                 query = self.attentions[attn_index](
                     query,
@@ -556,6 +559,42 @@ class TopoNetHead(AnchorFreeHead):
         self.real_w = self.pc_range[3] - self.pc_range[0]
         self.real_h = self.pc_range[4] - self.pc_range[1]
         self.num_reg_fcs = num_reg_fcs
+
+        # (Start) For trajectory
+        # TODO: hard-coded
+        self.map_query_scale = 2
+
+        # TODO: additional
+        num_vec_one2one = 50
+        num_vec_one2many = 50 * 6 # TODO: check why 6
+        fixed_ptsnum_per_pred_line = 20
+        num_pts_per_vec = fixed_ptsnum_per_pred_line
+        fixed_ptsnum_per_gt_line = 20
+        num_pts_per_gt_vec = fixed_ptsnum_per_gt_line
+        dir_interval = 1
+
+        num_vec = num_vec_one2one + num_vec_one2many
+        self.num_vec = num_vec
+        self.num_pts_per_vec = num_pts_per_vec
+        self.num_pts_per_gt_vec = num_pts_per_gt_vec
+        self.dir_interval = dir_interval
+
+        self.label_encoder = nn.Linear(3, self.embed_dims)
+        self.query_attention = MultiheadAttention(
+            self.embed_dims,
+            num_heads=8,
+            batch_first=True,
+            dropout=0.0)
+
+        self.map_feats_conv = nn.Sequential(
+            nn.Conv2d(self.embed_dims + 3,
+                      self.embed_dims, 3,
+                      padding=1,
+                      bias=False),
+            nn.BatchNorm2d(self.embed_dims),
+            nn.ReLU(True))
+        # (End) For trajectory
+
         self._init_layers()
 
     def _init_layers(self):
@@ -608,9 +647,46 @@ class TopoNetHead(AnchorFreeHead):
                 nn.init.constant_(m[-1].bias, bias_init)
 
     @auto_fp16(apply_to=('mlvl_feats'))
-    def forward_first_half(self, mlvl_feats, bev_feats, img_metas, te_feats, te_cls_scores):
+    def forward_first_half(self, mlvl_feats, bev_feats, img_metas, te_feats, te_cls_scores, local_map=None, bev_pos=None):
         dtype = mlvl_feats[0].dtype
-        object_query_embeds = self.query_embedding.weight.to(dtype)
+        object_query_embeds = self.query_embedding.weight.to(dtype) # TODO: left half is query_pos, right half is query
+
+        # TODO: only need half of object_query_embeds
+        if local_map is not None:
+
+            bs = local_map.shape[1]
+
+            local_map_input = local_map.permute(1, 0, 2).view(bs, self.bev_h, self.bev_w, -1).permute(0, 3, 1, 2)
+            local_map_input = F.interpolate(local_map_input, [self.bev_h // self.map_query_scale, self.bev_w // self.map_query_scale]).permute(0, 2, 3, 1)
+            local_map_pos = F.interpolate(bev_pos.view(1, self.bev_h, self.bev_w, -1).permute(0, 3, 1, 2), [self.bev_h // self.map_query_scale, self.bev_w // self.map_query_scale]).permute(0, 2, 3, 1)
+
+            local_map_valid, _ = torch.max(local_map_input, dim=-1)
+
+            # TODO: query initialization ???
+            query_embeds_list = []
+            for i in range(bs):
+
+                valid_index = local_map_valid[i] > 0.8
+                if torch.equal(valid_index, torch.zeros(valid_index.shape, dtype=torch.bool, device=valid_index.device)):
+                    query_embeds_list.append(object_query_embeds[:, self.embed_dims:].clone())
+                else:
+                    map_pos_embed = local_map_pos[i][valid_index]
+                    map_label = local_map_input[i][valid_index]
+                    map_label_embed = self.label_encoder(map_label)
+                    map_query = map_pos_embed + map_label_embed
+                    query_embeds = self.query_attention(object_query_embeds[:, self.embed_dims:].unsqueeze(0), key=map_query.unsqueeze(0))
+                    query_embeds_list.append(query_embeds.squeeze(0))
+
+            if bs > 1:
+                raise NotImplementedError('Not implemented for bs != 1. Dimensions are different.')
+            object_query_embeds = torch.cat([object_query_embeds[:, :self.embed_dims], torch.stack(query_embeds_list, dim=0).squeeze(0)], dim=-1)
+
+            if local_map is not None:
+                bev_feats = bev_feats.view(bs, self.bev_h, self.bev_w, -1).permute(0, 3, 1, 2).contiguous()
+                local_map_reshape = local_map.permute(1, 0, 2).view(bs, self.bev_h, self.bev_w, -1).permute(0, 3, 1, 2).contiguous()
+                bev_fuse = torch.cat((bev_feats, local_map_reshape), dim=1)
+                bev_feats = self.map_feats_conv(bev_fuse)
+                bev_feats = bev_feats.flatten(2).permute(0, 2, 1).contiguous()
 
         if te_feats is not None:
             te_feats = torch.stack([self.te_embed_branches[lid](te_feats[lid]) for lid in range(len(te_feats))])

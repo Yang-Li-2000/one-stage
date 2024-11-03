@@ -47,6 +47,7 @@ class BEVFormerConstructer(BaseModule):
                  bev_w=200,
                  rotate_center=[100, 100],
                  encoder=None,
+                 map_encoder=None,
                  positional_encoding=None,
                  **kwargs):
         super(BEVFormerConstructer, self).__init__(**kwargs)
@@ -61,6 +62,8 @@ class BEVFormerConstructer(BaseModule):
         self.can_bus_norm = can_bus_norm
         self.use_cams_embeds = use_cams_embeds
         self.encoder = build_transformer_layer_sequence(encoder)
+        if map_encoder is not None:
+            self.map_encoder = build_transformer_layer_sequence(map_encoder)
         self.positional_encoding = build_positional_encoding(positional_encoding)
 
         self.pc_range = pc_range
@@ -105,7 +108,7 @@ class BEVFormerConstructer(BaseModule):
         xavier_init(self.can_bus_mlp, distribution='uniform', bias=0.)
 
     # @auto_fp16(apply_to=('mlvl_feats', 'prev_bev'))
-    def forward(self, mlvl_feats, img_metas, prev_bev=None, **kwargs):
+    def forward(self, mlvl_feats, img_metas, prev_bev=None, local_map=None, **kwargs):
         """
         obtain bev features.
         """
@@ -197,5 +200,38 @@ class BEVFormerConstructer(BaseModule):
             **kwargs
         )
 
-        return bev_embed
+        # TODO: above is where the bev_embed is generated,
+        #  use its Q to get bev_embed_map:
+        #  map_encoder | bev_encoder
+        #  bev_queries: bev_queries
+        #  feat_flatten: ???
+        #  spatial_shapes: ???
+        #  level_start_index: ???
+
+        # TODO: correct the dimension of map_decoder
+        if self.map_encoder is not None and local_map is not None:
+            bev_embed_map = self.map_encoder(
+                bev_queries,
+                feat_flatten,
+                feat_flatten,
+                bev_h=self.bev_h,
+                bev_w=self.bev_w,
+                bev_pos=bev_pos,
+                spatial_shapes=spatial_shapes,
+                level_start_index=level_start_index,
+                prev_bev=prev_bev,
+                shift=shift,
+                img_metas=img_metas,
+                **kwargs
+            )
+            local_map_mask, _ = torch.max(local_map, dim=-1)
+            local_map_mask = local_map_mask.permute(1, 0)
+            local_map_mask = local_map_mask < 0.8
+            try:
+                bev_embed_map[local_map_mask] = 0.0
+            except:
+                breakpoint()
+            bev_embed = bev_embed + bev_embed_map
+
+        return bev_embed, bev_pos
 

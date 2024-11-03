@@ -23,6 +23,7 @@ from openlanev2.visualization import draw_annotation_pv, assign_attribute, assig
 
 from ..core.lane.util import fix_pts_interpolate
 from ..core.visualizer.lane import show_bev_results
+import pickle
 
 
 @DATASETS.register_module()
@@ -49,11 +50,21 @@ class OpenLaneV2_subset_A_Dataset(Custom3DDataset):
                  filter_empty_te=False,
                  split='train',
                  filter_map_change=False,
+                 open_to_av_mapping_file=None,
+                 log_id_to_city_name_file=None,
                  **kwargs):
         self.filter_map_change = filter_map_change
         self.split = split
         self.queue_length = queue_length
         self.filter_empty_te = filter_empty_te
+        if open_to_av_mapping_file is not None:
+            with open(open_to_av_mapping_file, 'rb') as f:
+                self.open_to_av_mappings = pickle.load(f)
+
+        if log_id_to_city_name_file is not None:
+            with open(log_id_to_city_name_file, 'rb') as f:
+                self.log_id_to_city_name = pickle.load(f)
+
         super().__init__(data_root, ann_file, **kwargs)
 
     def load_annotations(self, ann_file):
@@ -141,6 +152,17 @@ class OpenLaneV2_subset_A_Dataset(Custom3DDataset):
         can_bus[-1] = patch_angle
         input_dict['can_bus'] = can_bus
         input_dict['lidar2global_rotation'] = np.array(info['pose']['rotation'])
+
+        # Add additional information for global map and local map
+        input_dict['log_id'] = self.open_to_av_mappings[input_dict['scene_token']]
+        input_dict['timestamp'] = input_dict['sample_idx']
+
+        input_dict['map_location'] = self.log_id_to_city_name[input_dict['log_id']]
+
+        trans = np.eye(4)
+        trans[:3, :3] = info['pose']['rotation']
+        trans[:3, -1] = info['pose']['translation']
+        input_dict['lidar2global'] = trans
 
         return input_dict
 

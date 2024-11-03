@@ -37,13 +37,34 @@ _ffn_cfg_ = dict(
     ffn_drop=0.1,
     act_cfg=dict(type='ReLU', inplace=True),
 ),
+_map_ffn_cfg_ = dict(
+    type='FFN',
+    embed_dims=_dim_,
+    feedforward_channels=_ffn_dim_,
+    num_fcs=2,
+    ffn_drop=0.1,
+    act_cfg=dict(type='ReLU', inplace=True),
+),
 
 _num_levels_ = 4
 bev_h_ = 100
 bev_w_ = 200
 
+map_cfg = dict(
+    pc_range=point_cloud_range,
+    bev_h=bev_h_,
+    bev_w=bev_w_,
+    fuse_method='prob',  # all or prob
+    raster_size=[0.30, 0.30], # TODO: check it
+    dataset='av2',
+    load_map_path='./maps/debug_openlanev2_global_map.pt',
+    save_map_path=None,
+    update_map=False,
+)
+
 model = dict(
     type='MergedTopoNet',
+    global_map_cfg=map_cfg,
     img_backbone=dict(
         type='ResNet',
         depth=50,
@@ -100,6 +121,34 @@ model = dict(
                     )
                 ],
                 ffn_cfgs=_ffn_cfg_,
+                operation_order=('self_attn', 'norm', 'cross_attn', 'norm',
+                                 'ffn', 'norm'))),
+        map_encoder=dict(
+            type='BEVFormerEncoder',
+            num_layers=1,
+            pc_range=point_cloud_range,
+            num_points_in_pillar=4,
+            return_intermediate=False,
+            transformerlayers=dict(
+                type='BEVFormerLayer',
+                attn_cfgs=[
+                    dict(
+                        type='TemporalSelfAttention',
+                        embed_dims=_dim_,
+                        num_levels=1),
+                    dict(
+                        type='SpatialCrossAttention',
+                        num_cams=num_cams,
+                        pc_range=point_cloud_range,
+                        deformable_attention=dict(
+                            type='MSDeformableAttention3D',
+                            embed_dims=_dim_,
+                            num_points=8,
+                            num_levels=_num_levels_),
+                        embed_dims=_dim_,
+                     )
+                ],
+                ffn_cfgs=_map_ffn_cfg_,
                 operation_order=('self_attn', 'norm', 'cross_attn', 'norm',
                                  'ffn', 'norm'))),
         positional_encoding=dict(
@@ -287,7 +336,10 @@ data = dict(
         modality=input_modality,
         split='train',
         filter_map_change=True,
-        test_mode=False),
+        test_mode=False,
+        open_to_av_mapping_file='maps/open_to_av_all.pkl',
+        log_id_to_city_name_file='maps/log_id_to_city_name.pkl'
+        ),
     val=dict(
         type=dataset_type,
         data_root=data_root,
@@ -296,7 +348,10 @@ data = dict(
         classes=class_names,
         modality=input_modality,
         split='val',
-        test_mode=True),
+        test_mode=True,
+        open_to_av_mapping_file='maps/open_to_av_all.pkl',
+        log_id_to_city_name_file='maps/log_id_to_city_name.pkl'
+    ),
     test=dict(
         type=dataset_type,
         data_root=data_root,
@@ -305,7 +360,10 @@ data = dict(
         classes=class_names,
         modality=input_modality,
         split='val',
-        test_mode=True)
+        test_mode=True,
+        open_to_av_mapping_file='maps/open_to_av_all.pkl',
+        log_id_to_city_name_file='maps/log_id_to_city_name.pkl'
+    )
 )
 
 optimizer = dict(
