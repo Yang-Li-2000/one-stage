@@ -590,7 +590,8 @@ def get_vectors(trajs, labels, patch_box, patch_angle, patch,
 
 
 # Start Creating Global Map
-data_root = Path('/DATA_EDS2/zhangzz2401/zhangzz2401/MapTR-maptrv2/data/argoverse2/sensor/train')
+data_root = Path('/data_storage/liyang/argoverse2/sensor/train')
+# data_root = Path('/DATA_EDS2/zhangzz2401/zhangzz2401/MapTR-maptrv2/data/argoverse2/sensor/train')
 # data_root = Path('/data21/2024/liy2408/ram_disk/mini_train')
 loader = AV2SensorDataLoader(data_root, data_root)
 list_log_id = os.listdir(data_root)
@@ -657,7 +658,7 @@ for log_id in tqdm(list_log_id, desc='Getting trajectories'):
 
     # Trajectory from other vehicles
     EPS = 0.01
-    SAMPLE_INTERVAL = 5
+    SAMPLE_INTERVAL = 1
     list_trajectory_other_objects = []
     for lidar_timestamp_ns in all_time_stamps[::SAMPLE_INTERVAL]:
 
@@ -718,8 +719,6 @@ print('PAO:', len(scenes_trajs_PAO))
 print('PIT:', len(scenes_trajs_PIT))
 print('ATX:', len(scenes_trajs_ATX))
 print('DTW:', len(scenes_trajs_DTW))
-
-print()
 total_number_of_trajectories = 0
 total_number_of_trajectories += len(scenes_trajs_WDC)
 total_number_of_trajectories += len(scenes_trajs_MIA)
@@ -728,7 +727,6 @@ total_number_of_trajectories += len(scenes_trajs_PIT)
 total_number_of_trajectories += len(scenes_trajs_ATX)
 total_number_of_trajectories += len(scenes_trajs_DTW)
 print("Total number of ego trajectories:", total_number_of_trajectories)
-
 print()
 print()
 print()
@@ -741,8 +739,6 @@ print('PAO:', len(scenes_trajs_PAO_other))
 print('PIT:', len(scenes_trajs_PIT_other))
 print('ATX:', len(scenes_trajs_ATX_other))
 print('DTW:', len(scenes_trajs_DTW_other))
-
-print()
 total_number_of_trajectories = 0
 total_number_of_trajectories += len(scenes_trajs_WDC_other)
 total_number_of_trajectories += len(scenes_trajs_MIA_other)
@@ -751,7 +747,9 @@ total_number_of_trajectories += len(scenes_trajs_PIT_other)
 total_number_of_trajectories += len(scenes_trajs_ATX_other)
 total_number_of_trajectories += len(scenes_trajs_DTW_other)
 print("Total number of other trajectories:", total_number_of_trajectories)
-
+print()
+print()
+print()
 
 # def plot_city_trajectory_map_all(scenes_trajs, scenes_trajs_other,
 #                                  city_name=None):
@@ -809,7 +807,7 @@ map_cfg = dict(
     raster_size=[0.30, 0.30],
     dataset='av2',
     load_map_path=None,
-    save_map_path='openlanev2_global_map_with_other_cars.pt',
+    save_map_path='openlanev2_global_map_with_other_cars_no_subsampling.pt',
     update_map=False,
 )
 
@@ -892,6 +890,7 @@ list_scenes_trajs_dicts_other = [scenes_trajs_WDC_other,
 first_value = 60
 second_value = 30
 
+print()
 print("Updating Global Map:")
 for city_name, scenes_trajs_dict, scenes_trajs_dict_other in tqdm(zip(
         list_city_names, list_scenes_trajs_dicts,
@@ -1029,7 +1028,7 @@ def vis_global_map(city_name):
         fuse_method='prob',  # all or prob
         raster_size=[0.30, 0.30],
         dataset='av2',
-        load_map_path='openlanev2_global_map_with_other_cars.pt',
+        load_map_path='openlanev2_global_map_with_other_cars_no_subsampling.pt',
         save_map_path=None,
         update_map=True,
     )
