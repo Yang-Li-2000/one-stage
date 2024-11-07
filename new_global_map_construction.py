@@ -846,7 +846,8 @@ category_mappings = {
     'RAILED_VEHICLE': -1,
     'OFFICIAL_SIGNALER': -1,
     'TRAFFIC_LIGHT_TRAILER': -1,
-    'ANIMAL': -1
+    'ANIMAL': -1,
+    'MOBILE_PEDESTRIAN_CROSSING_SIGN': -1
 }
 #
 # print("category: 1:")
@@ -955,7 +956,15 @@ for city_name, scenes_trajs_dict, scenes_trajs_dict_other in tqdm(zip(
 
             cur_trajs = [traj_other]
 
-            mapped_label = category_mappings[label_other]
+            try:
+                mapped_label = category_mappings[label_other]
+            except:
+                category_mappings[label_other] = -1
+                print()
+                print("Adding missing key to dict:", label_other)
+                print()
+                mapped_label = category_mappings[label_other]
+
             if mapped_label == -1:
                 continue
             cur_labels = [mapped_label]
