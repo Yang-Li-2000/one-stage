@@ -499,6 +499,9 @@ class MergedTopoNet(MVXTwoStageDetector):
         if local_map.shape[0] == 0:
             print('The 0th dimension of local_map is 0. Setting local_map to None')
             local_map = None
+        # TODO: set anything nonzero to 1
+        if local_map is not None:
+            local_map = (local_map > 0).to(local_map.dtype)
 
         # TODO: flip local map
         if local_map is not None:

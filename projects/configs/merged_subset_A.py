@@ -57,7 +57,7 @@ map_cfg = dict(
     fuse_method='prob',  # all or prob
     raster_size=[0.30, 0.30], # TODO: check it
     dataset='av2',
-    load_map_path='./maps/debug_openlanev2_global_map.pt',
+    load_map_path='./maps/openlanev2_global_map_with_other_cars.pt',
     save_map_path=None,
     update_map=False,
 )
