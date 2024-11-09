@@ -210,6 +210,20 @@ def main():
         # build the model and load checkpoint
         # cfg.model.train_cfg = None
         model = build_model(cfg.model, test_cfg=cfg.get('test_cfg'))
+
+        # Remove unused layers
+        model.pts_bbox_head.te_embed_branches = None
+
+        for i in range(len(model.pts_bbox_head.lclc_branches) - 1):
+            model.pts_bbox_head.lclc_branches[i] = None
+            model.pts_bbox_head.lcte_branches[i] = None
+        model.pts_bbox_head.lclc_branches[-1].MLP_o1 = None
+        model.pts_bbox_head.lclc_branches[-1].MLP_o2 = None
+        model.pts_bbox_head.lclc_branches[-1].classifier = None
+        model.pts_bbox_head.lcte_branches[-1].MLP_o1 = None
+        model.pts_bbox_head.lcte_branches[-1].MLP_o2 = None
+        model.pts_bbox_head.lcte_branches[-1].classifier = None
+
         fp16_cfg = cfg.get('fp16', None)
         if fp16_cfg is not None:
             wrap_fp16_model(model)
