@@ -357,30 +357,33 @@ class MergedTopoNet(MVXTwoStageDetector):
         unscaling = self.head_dim ** 0.5
 
         # Unscaling & stacking attention queries
-        projected_q_te = []
-        for q, proj_q in zip(decoder_attention_queries_te, self.proj_q_te):
-            projected_q_te.append(proj_q(q.permute(1, 0, 2) * unscaling))
-        decoder_attention_queries_te = torch.stack(projected_q_te, -2)  # [bsz, num_object_queries, num_layers, d_model]
+        device = decoder_attention_queries_te[0].device
+        # For TE
+        QK_te_shape = [6, 100, 1, 256]
+        projected_q_te = torch.empty(QK_te_shape).to(device)  # Allocate once
+        for i, (q, proj_q) in enumerate(zip(decoder_attention_queries_te, self.proj_q_te)):
+            projected_q_te[i] = proj_q(q * unscaling)
+        decoder_attention_queries_te = projected_q_te.permute(2, 1, 0, 3)
         del projected_q_te
 
-        # Stacking attention keys
-        projected_k_te = []
-        for k, proj_k in zip(decoder_attention_keys_te, self.proj_k_te):
-            projected_k_te.append(proj_k(k.permute(1, 0, 2)))
-        decoder_attention_keys_te = torch.stack(projected_k_te, -2)  # [bsz, num_object_queries, num_layers, d_model]
+        projected_k_te = torch.empty(QK_te_shape).to(device)
+        for i, (k, proj_k) in enumerate(zip(decoder_attention_keys_te, self.proj_k_te)):
+            projected_k_te[i] = proj_k(k)
+        decoder_attention_keys_te = projected_k_te.permute(2, 1, 0, 3)
         del projected_k_te
 
-        projected_q_cl = []
-        for q, proj_q in zip(decoder_attention_queries_cl, self.proj_q_cl):
-            projected_q_cl.append(proj_q(q.permute(1, 0, 2) * unscaling))
-        decoder_attention_queries_cl = torch.stack(projected_q_cl, -2)  # [bsz, num_object_queries, num_layers, d_model]
+        # For CL
+        QK_cl_shape = [6, 200, 1, 256]
+        projected_q_cl = torch.empty(QK_cl_shape).to(device)
+        for i, (q, proj_q) in enumerate(zip(decoder_attention_queries_cl, self.proj_q_cl)):
+            projected_q_cl[i] = proj_q(q * unscaling)
+        decoder_attention_queries_cl = projected_q_cl.permute(2, 1, 0, 3)
         del projected_q_cl
 
-        # Stacking attention keys
-        projected_k_cl = []
-        for k, proj_k in zip(decoder_attention_keys_cl, self.proj_k_cl):
-            projected_k_cl.append(proj_k(k.permute(1, 0, 2)))
-        decoder_attention_keys_cl = torch.stack(projected_k_cl, -2)  # [bsz, num_object_queries, num_layers, d_model]
+        projected_k_cl = torch.empty(QK_cl_shape).to(device)
+        for i, (k, proj_k) in enumerate(zip(decoder_attention_keys_cl, self.proj_k_cl)):
+            projected_k_cl[i] = proj_k(k)
+        decoder_attention_keys_cl = projected_k_cl.permute(2, 1, 0, 3)
         del projected_k_cl
 
         # concat before pairwise concat
@@ -388,13 +391,11 @@ class MergedTopoNet(MVXTwoStageDetector):
         decoder_attention_keys = torch.cat([decoder_attention_keys_te, decoder_attention_keys_cl], dim=1)
 
         # Pairwise concatenation
-        decoder_attention_queries = decoder_attention_queries.unsqueeze(
-            2).repeat(
-            1, 1, num_object_queries, 1, 1
+        decoder_attention_queries = decoder_attention_queries.unsqueeze(2).expand(
+            -1, -1, num_object_queries, -1, -1
         )
-        decoder_attention_keys = decoder_attention_keys.unsqueeze(
-            1).repeat(
-            1, num_object_queries, 1, 1, 1
+        decoder_attention_keys = decoder_attention_keys.unsqueeze(1).expand(
+            -1, num_object_queries, -1, -1, -1
         )
         relation_source = torch.cat(
             [decoder_attention_queries, decoder_attention_keys],
@@ -406,16 +407,8 @@ class MergedTopoNet(MVXTwoStageDetector):
         #  Specifically, clcl should only receive query_cl while tecl receives both
         # clcl
         sequence_output_clcl = query_cl.permute(1, 0,2)
-        subject_output_clcl = (
-            self.final_sub_proj_clcl(sequence_output_clcl)
-            .unsqueeze(2)
-            .repeat(1, 1, self.nq_cl, 1)
-        )
-        object_output_clcl = (
-            self.final_obj_proj_clcl(sequence_output_clcl)
-            .unsqueeze(1)
-            .repeat(1, self.nq_cl, 1, 1)
-        )
+        subject_output_clcl = self.final_sub_proj_clcl(sequence_output_clcl).unsqueeze(2).expand(-1, -1, self.nq_cl, -1)
+        object_output_clcl = self.final_obj_proj_clcl(sequence_output_clcl).unsqueeze(1).expand(-1, self.nq_cl, -1, -1)
         del sequence_output_clcl
         relation_source_clcl = torch.cat(
             [
@@ -429,16 +422,8 @@ class MergedTopoNet(MVXTwoStageDetector):
 
         # tecl
         sequence_output_tecl = torch.cat([query_te, query_cl], dim=0).permute(1, 0, 2)
-        subject_output_tecl = (
-            self.final_sub_proj_tecl(sequence_output_tecl)
-            .unsqueeze(2)
-            .repeat(1, 1, num_object_queries, 1)
-        )
-        object_output_tecl = (
-            self.final_obj_proj_tecl(sequence_output_tecl)
-            .unsqueeze(1)
-            .repeat(1, num_object_queries, 1, 1)
-        )
+        subject_output_tecl = self.final_sub_proj_tecl(sequence_output_tecl).unsqueeze(2).expand(-1, -1, num_object_queries, -1)
+        object_output_tecl = self.final_obj_proj_tecl(sequence_output_tecl).unsqueeze(1).expand(-1, num_object_queries, -1, -1)
         del sequence_output_tecl
         relation_source_tecl = torch.cat(
             [
@@ -452,19 +437,17 @@ class MergedTopoNet(MVXTwoStageDetector):
 
         # Gated sum
         relation_source_tecl = relation_source_tecl[:, self.nq_te:, :self.nq_te]
-        rel_gate_tecl = torch.sigmoid(self.rel_predictor_gate_tecl(relation_source_tecl))
-        gated_relation_source_tecl = torch.mul(rel_gate_tecl, relation_source_tecl).sum(dim=-2)
+        rel_gate_tecl = self.rel_predictor_gate_tecl(relation_source_tecl).sigmoid_()
+        gated_relation_source_tecl = (rel_gate_tecl * relation_source_tecl).sum(dim=-2)
 
-        rel_gate_clcl = torch.sigmoid(self.rel_predictor_gate_clcl(relation_source_clcl))
-        gated_relation_source_clcl = torch.mul(rel_gate_clcl, relation_source_clcl).sum(dim=-2)
+        rel_gate_clcl = self.rel_predictor_gate_clcl(relation_source_clcl).sigmoid_()
+        gated_relation_source_clcl = (rel_gate_clcl * relation_source_clcl).sum(dim=-2)
 
         # Connectivity
         pred_connectivity_tecl = self.connectivity_layer_tecl(gated_relation_source_tecl)
         pred_connectivity_clcl = self.connectivity_layer_clcl(gated_relation_source_clcl)
-        del relation_source_tecl
-        del gated_relation_source_clcl
-        del rel_gate_tecl
-        del rel_gate_clcl
+        del relation_source_tecl, relation_source_clcl, gated_relation_source_tecl, gated_relation_source_clcl
+        del rel_gate_tecl, rel_gate_clcl
         del relation_source
 
         # 4. go through the second half
