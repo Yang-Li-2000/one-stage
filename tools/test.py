@@ -229,6 +229,9 @@ def main():
             # segmentation dataset has `PALETTE` attribute
             model.PALETTE = dataset.PALETTE
 
+        num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print("num_params built:", num_params)
+
         if not distributed:
             if "gpu_ids" in cfg:
                 model = MMDataParallel(model, device_ids=cfg.gpu_ids)
