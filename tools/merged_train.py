@@ -40,6 +40,12 @@ try:
 except ImportError:
     from mmdet3d.utils import setup_multi_processes
 
+import sys
+project_root = os.path.abspath('.')
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a detector')

@@ -17,9 +17,9 @@ from pyquaternion import Quaternion
 from mmcv.parallel import DataContainer as DC
 from mmdet.datasets import DATASETS
 from mmdet3d.datasets import Custom3DDataset
-from openlanev2.evaluation import evaluate as openlanev2_evaluate
+from openlanev2.centerline.evaluation import evaluate as openlanev2_evaluate
 from openlanev2.utils import format_metric
-from openlanev2.visualization import draw_annotation_pv, assign_attribute, assign_topology
+from openlanev2.centerline.visualization import draw_annotation_pv, assign_attribute, assign_topology
 
 from ..core.lane.util import fix_pts_interpolate
 from ..core.visualizer.lane import show_bev_results
