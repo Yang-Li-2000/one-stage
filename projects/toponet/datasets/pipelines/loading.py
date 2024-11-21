@@ -9,6 +9,41 @@ import mmcv
 from mmdet.datasets.builder import PIPELINES
 from mmdet3d.datasets.pipelines import LoadAnnotations3D
 
+@PIPELINES.register_module()
+class CustomLoadMultiViewImageFromFilesToponet(object):
+
+    def __init__(self, to_float32=False, color_type='unchanged'):
+        self.to_float32 = to_float32
+        self.color_type = color_type
+
+    def __call__(self, results):
+        filename = results['img_filename']
+        # img is of shape (h, w, c, num_views)
+        img = [mmcv.imread(name, self.color_type) for name in filename]
+        if self.to_float32:
+            img = [_.astype(np.float32) for _ in img]
+        results['filename'] = filename
+        results['img'] = img
+        results['img_shape'] = [img_.shape for img_ in img]
+        results['ori_shape'] = [img_.shape for img_ in img]
+        # Set initial values for default meta_keys
+        results['pad_shape'] = [img_.shape for img_ in img]
+        results['crop_shape'] = [np.zeros(2) for img_ in img]
+        results['scale_factor'] = [1.0 for img_ in img]
+        num_channels = 1 if len(img[0].shape) < 3 else img[0].shape[2]
+        results['img_norm_cfg'] = dict(
+            mean=np.zeros(num_channels, dtype=np.float32),
+            std=np.ones(num_channels, dtype=np.float32),
+            to_rgb=False)
+        return results
+
+    def __repr__(self):
+        """str: Return a string that describes the module."""
+        repr_str = self.__class__.__name__
+        repr_str += f'(to_float32={self.to_float32}, '
+        repr_str += f"color_type='{self.color_type}')"
+        return repr_str
+
 
 @PIPELINES.register_module()
 class CustomLoadMultiViewImageFromFiles(object):

@@ -1,4 +1,3 @@
-
 # ---------------------------------------------
 # Copyright (c) OpenMMLab. All rights reserved.
 # ---------------------------------------------
@@ -19,13 +18,13 @@ import cv2 as cv
 import mmcv
 from mmcv.utils import TORCH_VERSION, digit_version
 from mmcv.utils import ext_loader
+
 ext_module = ext_loader.load_ext(
     '_ext', ['ms_deform_attn_backward', 'ms_deform_attn_forward'])
 
 
 @TRANSFORMER_LAYER_SEQUENCE.register_module()
 class BEVFormerEncoder(TransformerLayerSequence):
-
     """
     Attention with both self and cross
     Implements the decoder in DETR transformer.
@@ -98,11 +97,11 @@ class BEVFormerEncoder(TransformerLayerSequence):
         reference_points = reference_points.clone()
 
         reference_points[..., 0:1] = reference_points[..., 0:1] * \
-            (pc_range[3] - pc_range[0]) + pc_range[0]
+                                     (pc_range[3] - pc_range[0]) + pc_range[0]
         reference_points[..., 1:2] = reference_points[..., 1:2] * \
-            (pc_range[4] - pc_range[1]) + pc_range[1]
+                                     (pc_range[4] - pc_range[1]) + pc_range[1]
         reference_points[..., 2:3] = reference_points[..., 2:3] * \
-            (pc_range[5] - pc_range[2]) + pc_range[2]
+                                     (pc_range[5] - pc_range[2]) + pc_range[2]
 
         reference_points = torch.cat(
             (reference_points, torch.ones_like(reference_points[..., :1])), -1)
@@ -156,6 +155,11 @@ class BEVFormerEncoder(TransformerLayerSequence):
                 level_start_index=None,
                 valid_ratios=None,
                 prev_bev=None,
+                map_bev=None,
+                bev_spatial_shapes=None,
+                bev_level_start_index=None,
+                map_graph_feats=None,
+                map_graph_shapes=None,
                 shift=0.,
                 **kwargs):
         """Forward function for `TransformerDecoder`.
@@ -181,7 +185,8 @@ class BEVFormerEncoder(TransformerLayerSequence):
         intermediate = []
 
         ref_3d = self.get_reference_points(
-            bev_h, bev_w, self.pc_range[5]-self.pc_range[2], self.num_points_in_pillar, dim='3d', bs=bev_query.size(1),  device=bev_query.device, dtype=bev_query.dtype)
+            bev_h, bev_w, self.pc_range[5] - self.pc_range[2], self.num_points_in_pillar, dim='3d',
+            bs=bev_query.size(1), device=bev_query.device, dtype=bev_query.dtype)
         ref_2d = self.get_reference_points(
             bev_h, bev_w, dim='2d', bs=bev_query.size(1), device=bev_query.device, dtype=bev_query.dtype)
 
@@ -189,7 +194,7 @@ class BEVFormerEncoder(TransformerLayerSequence):
             ref_3d, self.pc_range, kwargs['img_metas'])
 
         # bug: this code should be 'shift_ref_2d = ref_2d.clone()', we keep this bug for reproducing our results in paper.
-        shift_ref_2d = ref_2d.clone()
+        shift_ref_2d = ref_2d.clone()  # .clone()
         shift_ref_2d += shift[:, None, None, :]
 
         # (num_query, bs, embed_dims) -> (bs, num_query, embed_dims)
@@ -199,12 +204,12 @@ class BEVFormerEncoder(TransformerLayerSequence):
         if prev_bev is not None:
             prev_bev = prev_bev.permute(1, 0, 2)
             prev_bev = torch.stack(
-                [prev_bev, bev_query], 1).reshape(bs*2, len_bev, -1)
+                [prev_bev, bev_query], 1).reshape(bs * 2, len_bev, -1)
             hybird_ref_2d = torch.stack([shift_ref_2d, ref_2d], 1).reshape(
-                bs*2, len_bev, num_bev_level, 2)
+                bs * 2, len_bev, num_bev_level, 2)
         else:
             hybird_ref_2d = torch.stack([ref_2d, ref_2d], 1).reshape(
-                bs*2, len_bev, num_bev_level, 2)
+                bs * 2, len_bev, num_bev_level, 2)
 
         for lid, layer in enumerate(self.layers):
             output = layer(
@@ -222,6 +227,11 @@ class BEVFormerEncoder(TransformerLayerSequence):
                 reference_points_cam=reference_points_cam,
                 bev_mask=bev_mask,
                 prev_bev=prev_bev,
+                map_bev=map_bev,
+                bev_spatial_shapes=bev_spatial_shapes,
+                bev_level_start_index=bev_level_start_index,
+                map_graph_feats=map_graph_feats,
+                map_graph_shapes=map_graph_shapes,
                 **kwargs)
 
             bev_query = output
@@ -271,9 +281,9 @@ class BEVFormerLayer(MyCustomBaseTransformerLayer):
             norm_cfg=norm_cfg,
             **kwargs)
         self.fp16_enabled = False
-        assert len(operation_order) == 6
-        assert set(operation_order) == set(
-            ['self_attn', 'norm', 'cross_attn', 'ffn'])
+        # assert len(operation_order) == 6
+        # assert set(operation_order) == set(
+        #     ['self_attn', 'norm', 'cross_attn', 'ffn'])
 
     def forward(self,
                 query,
@@ -293,7 +303,12 @@ class BEVFormerLayer(MyCustomBaseTransformerLayer):
                 mask=None,
                 spatial_shapes=None,
                 level_start_index=None,
+                bev_spatial_shapes=None,
+                bev_level_start_index=None,
                 prev_bev=None,
+                map_bev=None,
+                map_graph_feats=None,
+                map_graph_shapes=None,
                 **kwargs):
         """Forward function for `TransformerDecoderLayer`.
 
@@ -342,7 +357,7 @@ class BEVFormerLayer(MyCustomBaseTransformerLayer):
             assert len(attn_masks) == self.num_attn, f'The length of ' \
                                                      f'attn_masks {len(attn_masks)} must be equal ' \
                                                      f'to the number of attention in ' \
-                f'operation_order {self.num_attn}'
+                                                     f'operation_order {self.num_attn}'
 
         for layer in self.operation_order:
             # temporal self attention
@@ -371,6 +386,7 @@ class BEVFormerLayer(MyCustomBaseTransformerLayer):
 
             # spaital cross attention
             elif layer == 'cross_attn':
+                # query_pos is None
                 query = self.attentions[attn_index](
                     query,
                     key,
@@ -385,6 +401,35 @@ class BEVFormerLayer(MyCustomBaseTransformerLayer):
                     key_padding_mask=key_padding_mask,
                     spatial_shapes=spatial_shapes,
                     level_start_index=level_start_index,
+                    **kwargs)
+                attn_index += 1
+                identity = query
+
+            # bev cross attention
+            elif layer == 'cross_attn_bev':
+                query = self.attentions[attn_index](
+                    query,
+                    None,
+                    map_bev,
+                    identity if self.pre_norm else None,
+                    query_pos=bev_pos,
+                    reference_points=ref_2d,
+                    attn_mask=attn_masks[attn_index],
+                    spatial_shapes=bev_spatial_shapes,
+                    level_start_index=bev_level_start_index,
+                    **kwargs)
+                attn_index += 1
+                identity = query
+
+            # graph cross attention
+            elif layer == 'cross_attn_graph':
+                query = self.attentions[attn_index](
+                    query,
+                    None,
+                    map_graph_feats,
+                    residual=query,
+                    query_pos=bev_pos,
+                    spatial_shapes=map_graph_shapes,
                     **kwargs)
                 attn_index += 1
                 identity = query

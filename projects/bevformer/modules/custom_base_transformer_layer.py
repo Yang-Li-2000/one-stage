@@ -102,15 +102,15 @@ class MyCustomBaseTransformerLayer(BaseModule):
 
         self.batch_first = batch_first
 
-        assert set(operation_order) & set(
-            ['self_attn', 'norm', 'ffn', 'cross_attn']) == \
-            set(operation_order), f'The operation_order of' \
-            f' {self.__class__.__name__} should ' \
-            f'contains all four operation type ' \
-            f"{['self_attn', 'norm', 'ffn', 'cross_attn']}"
+        # assert set(operation_order) & set(
+        #     ['self_attn', 'norm', 'ffn', 'cross_attn']) == \
+        #     set(operation_order), f'The operation_order of' \
+        #     f' {self.__class__.__name__} should ' \
+        #     f'contains all four operation type ' \
+        #     f"{['self_attn', 'norm', 'ffn', 'cross_attn']}"
 
         num_attn = operation_order.count('self_attn') + operation_order.count(
-            'cross_attn')
+            'cross_attn') + operation_order.count('cross_attn_bev') + operation_order.count('cross_attn_graph')
         if isinstance(attn_cfgs, dict):
             attn_cfgs = [copy.deepcopy(attn_cfgs) for _ in range(num_attn)]
         else:
@@ -127,7 +127,7 @@ class MyCustomBaseTransformerLayer(BaseModule):
 
         index = 0
         for operation_name in operation_order:
-            if operation_name in ['self_attn', 'cross_attn']:
+            if operation_name in ['self_attn', 'cross_attn', 'cross_attn_bev', 'cross_attn_graph']:
                 if 'batch_first' in attn_cfgs[index]:
                     assert self.batch_first == attn_cfgs[index]['batch_first']
                 else:

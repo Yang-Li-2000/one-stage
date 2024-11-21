@@ -1,4 +1,3 @@
-
 # ---------------------------------------------
 # Copyright (c) OpenMMLab. All rights reserved.
 # ---------------------------------------------
@@ -23,6 +22,7 @@ from mmcv.runner.base_module import BaseModule, ModuleList, Sequential
 from mmcv.utils import ext_loader
 from .multi_scale_deformable_attn_function import MultiScaleDeformableAttnFunction_fp32, \
     MultiScaleDeformableAttnFunction_fp16
+
 ext_module = ext_loader.load_ext(
     '_ext', ['ms_deform_attn_backward', 'ms_deform_attn_forward'])
 
@@ -70,7 +70,7 @@ class SpatialCrossAttention(BaseModule):
     def init_weight(self):
         """Default initialization for Parameters of Module."""
         xavier_init(self.output_proj, distribution='uniform', bias=0.)
-    
+
     @force_fp32(apply_to=('query', 'key', 'value', 'query_pos', 'reference_points_cam'))
     def forward(self,
                 query,
@@ -144,12 +144,13 @@ class SpatialCrossAttention(BaseModule):
             [bs, self.num_cams, max_len, self.embed_dims])
         reference_points_rebatch = reference_points_cam.new_zeros(
             [bs, self.num_cams, max_len, D, 2])
-        
+
         for j in range(bs):
-            for i, reference_points_per_img in enumerate(reference_points_cam):   
+            for i, reference_points_per_img in enumerate(reference_points_cam):
                 index_query_per_img = indexes[i]
                 queries_rebatch[j, i, :len(index_query_per_img)] = query[j, index_query_per_img]
-                reference_points_rebatch[j, i, :len(index_query_per_img)] = reference_points_per_img[j, index_query_per_img]
+                reference_points_rebatch[j, i, :len(index_query_per_img)] = reference_points_per_img[
+                    j, index_query_per_img]
 
         num_cams, l, bs, embed_dims = key.shape
 
@@ -158,9 +159,13 @@ class SpatialCrossAttention(BaseModule):
         value = value.permute(2, 0, 1, 3).reshape(
             bs * self.num_cams, l, self.embed_dims)
 
-        queries = self.deformable_attention(query=queries_rebatch.view(bs*self.num_cams, max_len, self.embed_dims), key=key, value=value,
-                                            reference_points=reference_points_rebatch.view(bs*self.num_cams, max_len, D, 2), spatial_shapes=spatial_shapes,
-                                            level_start_index=level_start_index).view(bs, self.num_cams, max_len, self.embed_dims)
+        queries = self.deformable_attention(query=queries_rebatch.view(bs * self.num_cams, max_len, self.embed_dims),
+                                            key=key, value=value,
+                                            reference_points=reference_points_rebatch.view(bs * self.num_cams, max_len,
+                                                                                           D, 2),
+                                            spatial_shapes=spatial_shapes,
+                                            level_start_index=level_start_index).view(bs, self.num_cams, max_len,
+                                                                                      self.embed_dims)
         for j in range(bs):
             for i, index_query_per_img in enumerate(indexes):
                 slots[j, index_query_per_img] += queries[j, i, :len(index_query_per_img)]
@@ -172,6 +177,200 @@ class SpatialCrossAttention(BaseModule):
         slots = self.output_proj(slots)
 
         return self.dropout(slots) + inp_residual
+
+
+@ATTENTION.register_module()
+class BEVSpatialCrossAttention(BaseModule):
+    """An attention module used in BEVFormer.
+    Args:
+        embed_dims (int): The embedding dimension of Attention.
+            Default: 256.
+        num_cams (int): The number of cameras
+        dropout (float): A Dropout layer on `inp_residual`.
+            Default: 0..
+        init_cfg (obj:`mmcv.ConfigDict`): The Config for initialization.
+            Default: None.
+        deformable_attention: (dict): The config for the deformable attention used in SCA.
+    """
+
+    def __init__(self,
+                 embed_dims=256,
+                 dropout=0.1,
+                 init_cfg=None,
+                 batch_first=False,
+                 deformable_attention=dict(
+                     type='MSDeformableAttention3D',
+                     embed_dims=256,
+                     num_levels=4),
+                 **kwargs
+                 ):
+        super(BEVSpatialCrossAttention, self).__init__(init_cfg)
+
+        self.init_cfg = init_cfg
+        self.dropout = nn.Dropout(dropout)
+        # self.pc_range = pc_range
+        self.fp16_enabled = False
+        self.deformable_attention = build_attention(deformable_attention)
+        self.embed_dims = embed_dims
+        # self.num_cams = num_cams
+        self.output_proj = nn.Linear(embed_dims, embed_dims)
+        self.batch_first = batch_first
+        self.init_weight()
+
+    def init_weight(self):
+        """Default initialization for Parameters of Module."""
+        xavier_init(self.output_proj, distribution='uniform', bias=0.)
+
+    @force_fp32(apply_to=('query', 'key', 'value', 'query_pos', 'reference_points_cam'))
+    def forward(self,
+                query,
+                key,
+                value,
+                residual=None,
+                query_pos=None,
+                reference_points=None,
+                spatial_shapes=None,
+                level_start_index=None,
+                **kwargs):
+        """Forward Function of Detr3DCrossAtten.
+        Args:
+            query (Tensor): Query of Transformer with shape
+                (num_query, bs, embed_dims).
+            key (Tensor): The key tensor with shape
+                `(num_key, bs, embed_dims)`.
+            value (Tensor): The value tensor with shape
+                `(num_key, bs, embed_dims)`. (B, N, C, H, W)
+            residual (Tensor): The tensor used for addition, with the
+                same shape as `x`. Default None. If None, `x` will be used.
+            query_pos (Tensor): The positional encoding for `query`.
+                Default: None.
+            key_pos (Tensor): The positional encoding for  `key`. Default
+                None.
+            reference_points (Tensor):  The normalized reference
+                points with shape (bs, num_query, 4),
+                all elements is range in [0, 1], top-left (0,0),
+                bottom-right (1, 1), including padding area.
+                or (N, Length_{query}, num_levels, 4), add
+                additional two dimensions is (w, h) to
+                form reference boxes.
+            key_padding_mask (Tensor): ByteTensor for `query`, with
+                shape [bs, num_key].
+            spatial_shapes (Tensor): Spatial shape of features in
+                different level. With shape  (num_levels, 2),
+                last dimension represent (h, w).
+            level_start_index (Tensor): The start index of each level.
+                A tensor has shape (num_levels) and can be represented
+                as [0, h_0*w_0, h_0*w_0+h_1*w_1, ...].
+        Returns:
+             Tensor: forwarded results with shape [num_query, bs, embed_dims].
+        """
+        if key is None:
+            key = value
+        if value is None:
+            value = key
+
+        if residual is None:
+            inp_residual = query
+            # slots = torch.zeros_like(query)
+        if query_pos is not None:
+            query = query + query_pos
+
+        bs, num_query, embed_dims = query.shape
+        _, num_value, _ = value.shape
+        assert (spatial_shapes[:, 0] * spatial_shapes[:, 1]).sum() == num_value
+
+        queries = self.deformable_attention(query=query, key=key, value=value,
+                                            reference_points=reference_points, spatial_shapes=spatial_shapes,
+                                            level_start_index=level_start_index)
+        # queries = queries.view(num_query, embed_dims, bs, self.num_bev_queue)
+        # queries = queries.mean(-1)
+
+        # (num_query, embed_dims, bs)-> (bs, num_query, embed_dims)
+        # queries = queries.permute(2, 0, 1)
+
+        queries = self.output_proj(queries)
+
+        if not self.batch_first:
+            queries = queries.permute(1, 0, 2)
+
+        return self.dropout(queries) + inp_residual
+
+
+@ATTENTION.register_module()
+class MaskedCrossAttention(BaseModule):
+    """An attention module used in BEVFormer.
+    Args:
+        embed_dims (int): The embedding dimension of Attention.
+            Default: 256.
+        num_heads (int): The number of heads in multihead attention
+        dropout (float): A Dropout layer on `inp_residual`.
+            Default: 0..
+        init_cfg (obj:`mmcv.ConfigDict`): The Config for initialization.
+            Default: None.
+    """
+
+    def __init__(self,
+                 embed_dims=256,
+                 num_heads=8,
+                 dropout=0.0,
+                 init_cfg=None,
+                 batch_first=True,
+                 **kwargs
+                 ):
+        super(MaskedCrossAttention, self).__init__(init_cfg)
+
+        self.init_cfg = init_cfg
+        self.fp16_enabled = False
+        self.embed_dims = embed_dims
+        self.num_heads = num_heads
+        self.batch_first = batch_first
+        self.multihead_attn = nn.MultiheadAttention(embed_dims,
+                                                    num_heads,
+                                                    dropout=dropout,
+                                                    batch_first=batch_first,
+                                                    **kwargs)
+
+    @force_fp32(apply_to=('query', 'key', 'value', 'query_pos', 'reference_points_cam'))
+    def forward(self,
+                query,
+                key,
+                value,
+                residual=None,
+                query_pos=None,
+                spatial_shapes=None,
+                **kwargs):
+        """Forward Function of Detr3DCrossAtten.
+        Args:
+            query (Tensor): Query of Transformer with shape
+                (num_query, bs, embed_dims).
+            key (Tensor): The key tensor with shape
+                `(num_key, bs, embed_dims)`.
+            value (Tensor): The value tensor with shape
+                `(num_key, bs, embed_dims)`. (bs, max_num_vectors, embed_dims)
+            residual (Tensor): The tensor used for addition, with the
+                same shape as `x`. Default None. If None, `x` will be used.
+            query_pos (Tensor): The positional encoding for `query`.
+                Default: None.
+            spatial_shapes (Tensor): number of polylines in each batch.
+        Returns:
+             Tensor: forwarded results with shape [num_query, bs, embed_dims].
+        """
+        if key is None:
+            key = value
+
+        if residual is None:
+            residual = query
+
+        if query_pos is not None:
+            query = query + query_pos
+
+        bs, _, _ = query.shape
+        key_padding_mask = torch.arange(spatial_shapes.max(), device=spatial_shapes.device).unsqueeze(0).repeat(bs, 1) >= spatial_shapes.unsqueeze(1)
+
+        queries = self.multihead_attn(query=query, key=key, value=value,
+                                      key_padding_mask=key_padding_mask, need_weights=False)[0]
+
+        return queries + residual
 
 
 @ATTENTION.register_module()
@@ -359,7 +558,7 @@ class MSDeformableAttention3D(BaseModule):
             bs, num_query, num_Z_anchors, xy = reference_points.shape
             reference_points = reference_points[:, :, None, None, None, :, :]
             sampling_offsets = sampling_offsets / \
-                offset_normalizer[None, None, None, :, None, :]
+                               offset_normalizer[None, None, None, :, None, :]
             bs, num_query, num_heads, num_levels, num_all_points, xy = sampling_offsets.shape
             sampling_offsets = sampling_offsets.view(
                 bs, num_query, num_heads, num_levels, num_all_points // num_Z_anchors, num_Z_anchors, xy)

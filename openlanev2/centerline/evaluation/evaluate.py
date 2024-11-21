@@ -28,6 +28,7 @@ from .distance import pairwise, chamfer_distance, frechet_distance, iou_distance
 from ..io import io
 from ..preprocessing import check_results
 from ...utils import TRAFFIC_ELEMENT_ATTRIBUTE
+import copy
 
 
 THRESHOLDS_FRECHET = [1.0, 2.0, 3.0]
@@ -657,3 +658,292 @@ def evaluate(ground_truth, predictions, verbose=True):
     metrics['F-Score for 3D Lane']['score'] = f1.bench_one_submit(gts=gts, preds=preds)
 
     return metrics
+
+
+def evaluate_by_distance(ground_truth, predictions, verbose=True, dist_thresh=25.):
+    r"""
+    Evaluate by distance.
+
+    Parameters
+    ----------
+    ground_truth : str / dict
+        Dict of ground truth of path to pickle file storing the dict.
+    predictions : str / dict
+        Dict of predictions of path to pickle file storing the dict.
+
+    Returns
+    -------
+    dict
+        A dict containing all defined metrics.
+
+    Notes
+    -----
+    One of pred_path and pred_dict must be None,
+    these two arguments provide flexibility for formatting the results only.
+
+    """
+    if isinstance(ground_truth, str):
+        ground_truth = io.pickle_load(ground_truth)
+
+    if predictions is None:
+        preds = {}
+        print('\nDummy evaluation on ground truth.\n')
+    else:
+        if isinstance(predictions, str):
+            predictions = io.pickle_load(predictions)
+        check_results(predictions)  # check results format
+        predictions = predictions['results']
+
+    gts = {}
+    preds = {}
+    for token in ground_truth.keys():
+        gts[token] = ground_truth[token]['annotation']
+        if predictions is None:
+            preds[token] = gts[token]
+            for i, _ in enumerate(preds[token]['lane_centerline']):
+                preds[token]['lane_centerline'][i]['confidence'] = np.float32(1)
+            for i, _ in enumerate(preds[token]['traffic_element']):
+                preds[token]['traffic_element'][i]['confidence'] = np.float32(1)
+        else:
+            preds[token] = predictions[token]['predictions']
+
+    assert set(gts.keys()) == set(preds.keys()), '#frame differs'
+
+    metrics = {
+        'OpenLane-V2 Score': {},
+        'F-Score for 3D Lane': {},
+    }
+
+    # filter close
+    filter_close = lambda x: (np.abs(x['points'][:, 0]) <= dist_thresh).all()
+    gts_close, preds_close = filter_gts(gts, preds, filter_close)
+
+    update_metrics(gts_close, preds_close, metrics, suffix='_close', verbose=verbose)
+
+    # filter far
+    filter_far = lambda x: (np.abs(x['points'][:, 0]) > dist_thresh).any()
+    gts_far, preds_far = filter_gts(gts, preds, filter_far)
+
+    update_metrics(gts_far, preds_far, metrics, suffix='_far', verbose=verbose)
+
+    return metrics
+
+
+def evaluate_by_intersection(ground_truth, predictions, verbose=True):
+    if isinstance(ground_truth, str):
+        ground_truth = io.pickle_load(ground_truth)
+
+    if isinstance(predictions, str):
+        predictions = io.pickle_load(predictions)
+
+    check_results(predictions)  # check results format
+    predictions = predictions['results']
+
+    filter_intersection = lambda x: x['is_intersection_or_connector']
+
+    gts = {}
+    preds = {}
+    gt_intersection_mask = {}
+    gt_nonintersection_mask = {}
+    for token in ground_truth.keys():
+        gts[token] = ground_truth[token]['annotation']
+        preds[token] = predictions[token]['predictions']
+
+        # get intersection from gts
+        lane_centerline_mask_gt = np.array([filter_intersection(gt) for gt in gts[token]['lane_centerline']]).astype(
+            np.bool)
+        gt_intersection_mask[token] = lane_centerline_mask_gt
+        gt_nonintersection_mask[token] = ~lane_centerline_mask_gt
+
+    assert set(gts.keys()) == set(preds.keys()), '#frame differs'
+
+    """
+        find assignments to intersections    
+    """
+    pred_intersection_mask = {}
+    pred_nonintersection_mask = {}
+    for token in tqdm(gts.keys(), desc='calculating distances:', ncols=80, disable=not verbose):
+        mask = pairwise(
+            [gt['points'] for gt in gts[token]['lane_centerline']],
+            [pred['points'] for pred in preds[token]['lane_centerline']],
+            chamfer_distance,
+            relax=True,
+        ) < THRESHOLDS_FRECHET[-1]
+
+        distance_matrix = pairwise(
+            [gt['points'] for gt in gts[token]['lane_centerline']],
+            [pred['points'] for pred in preds[token]['lane_centerline']],
+            frechet_distance,
+            mask=mask,
+            relax=True,
+        )
+
+        dist_idx = distance_matrix.argmin(0)
+        pred_intersection_mask[token] = gt_intersection_mask[token][dist_idx]
+        pred_nonintersection_mask[token] = ~pred_intersection_mask[token]
+
+    """
+        evaluate
+    """
+
+    metrics = {
+        'OpenLane-V2 Score': {},
+        'F-Score for 3D Lane': {},
+    }
+
+    """
+        OpenLane-V2 Score
+    """
+
+    # filter intersection
+    gts_intersection, preds_intersection = filter_centerlines_mask(gts, preds, gt_intersection_mask,
+                                                                   pred_intersection_mask)
+    update_metrics(gts_intersection, preds_intersection, metrics, suffix='_intersection', verbose=verbose)
+
+    # filter non-intersection
+    gts_non_intersection, preds_non_intersection = filter_centerlines_mask(gts, preds, gt_nonintersection_mask,
+                                                                           pred_nonintersection_mask)
+    update_metrics(gts_non_intersection, preds_non_intersection, metrics, suffix='_non_intersection', verbose=verbose)
+
+    return metrics
+
+
+def update_metrics(gts, preds, metrics, suffix='', verbose=True):
+    """
+        calculate distances between gts and preds
+    """
+
+    distance_matrixs = {
+        'frechet': {},
+        'iou': {},
+    }
+
+    for token in tqdm(gts.keys(), desc='calculating distances:', ncols=80, disable=not verbose):
+        mask = pairwise(
+            [gt['points'] for gt in gts[token]['lane_centerline']],
+            [pred['points'] for pred in preds[token]['lane_centerline']],
+            chamfer_distance,
+            relax=True,
+        ) < THRESHOLDS_FRECHET[-1]
+
+        distance_matrixs['frechet'][token] = pairwise(
+            [gt['points'] for gt in gts[token]['lane_centerline']],
+            [pred['points'] for pred in preds[token]['lane_centerline']],
+            frechet_distance,
+            mask=mask,
+            relax=True,
+        )
+
+        distance_matrixs['iou'][token] = pairwise(
+            [gt['points'] for gt in gts[token]['traffic_element']],
+            [pred['points'] for pred in preds[token]['traffic_element']],
+            iou_distance,
+        )
+
+    """
+        evaluate
+    """
+
+    metrics['OpenLane-V2 Score']['DET_l' + suffix] = _mAP_over_threshold(
+        gts=gts,
+        preds=preds,
+        distance_matrixs=distance_matrixs['frechet'],
+        distance_thresholds=THRESHOLDS_FRECHET,
+        object_type='lane_centerline',
+        filter=lambda _: True,
+        inject=True,  # save tp for eval on graph
+    ).mean()
+
+    metrics['OpenLane-V2 Score']['DET_t' + suffix] = np.hstack([_mAP_over_threshold(
+        gts=gts,
+        preds=preds,
+        distance_matrixs=distance_matrixs['iou'],
+        distance_thresholds=THRESHOLDS_IOU,
+        object_type='traffic_element',
+        filter=lambda x: x['attribute'] == idx,
+        inject=False,
+    ) for idx in TRAFFIC_ELEMENT_ATTRIBUTE.values()]).mean()
+
+    _mAP_over_threshold(
+        gts=gts,
+        preds=preds,
+        distance_matrixs=distance_matrixs['iou'],
+        distance_thresholds=THRESHOLDS_IOU,
+        object_type='traffic_element',
+        filter=lambda _: True,
+        inject=True,  # save tp for eval on graph
+    )
+    metrics['OpenLane-V2 Score']['TOP_ll' + suffix] = _mAP_topology_lclc(gts, preds, THRESHOLDS_FRECHET)
+    metrics['OpenLane-V2 Score']['TOP_lt' + suffix] = _mAP_topology_lcte(
+        gts,
+        preds,
+        {'lane_centerline': THRESHOLDS_FRECHET, 'traffic_element': THRESHOLDS_IOU},
+    )
+
+    metrics['OpenLane-V2 Score']['score' + suffix] = np.asarray([
+        metrics['OpenLane-V2 Score']['DET_l' + suffix],
+        metrics['OpenLane-V2 Score']['DET_t' + suffix],
+        np.sqrt(metrics['OpenLane-V2 Score']['TOP_ll' + suffix]),
+        np.sqrt(metrics['OpenLane-V2 Score']['TOP_lt' + suffix]),
+    ]).mean()
+
+    return metrics
+
+
+def filter_gts(gts, preds, filter_fn):
+    # gts_new = gts.copy()
+    # preds_new = preds.copy()
+    gts_new = copy.deepcopy(gts)
+    preds_new = copy.deepcopy(preds)
+
+    for token in gts.keys():
+        # filter
+        lane_centerline_mask_gt = np.array([filter_fn(gt) for gt in gts_new[token]['lane_centerline']]).astype(np.bool)
+        # traffic_element_mask_gt = np.array([filter_fn(gt) for gt in gts_new[token]['traffic_element']]).astype(np.bool)
+        gts_new[token]['lane_centerline'] = [gt for i, gt in
+                                             enumerate(gts_new[token]['lane_centerline']) if lane_centerline_mask_gt[i]]
+        # gts_new[token]['traffic_element'] = [gt for i, gt in
+        #                                        enumerate(gts_new[token]['traffic_element']) if traffic_element_mask_gt[i]]
+        gts_new[token]['topology_lclc'] = gts_new[token]['topology_lclc'][lane_centerline_mask_gt, :][:,
+                                          lane_centerline_mask_gt]
+        # gts_new[token]['topology_lcte'] = gts_new[token]['topology_lcte'][lane_centerline_mask_gt, :][:, traffic_element_mask_gt]
+        gts_new[token]['topology_lcte'] = gts_new[token]['topology_lcte'][lane_centerline_mask_gt, :]
+
+        lane_centerline_mask_pred = np.array([filter_fn(pred) for pred in preds_new[token]['lane_centerline']])
+        # traffic_element_mask_pred = np.array([filter_fn(pred) for pred in preds_new[token]['traffic_element']])
+        preds_new[token]['lane_centerline'] = [pred for i, pred in
+                                               enumerate(preds_new[token]['lane_centerline']) if
+                                               lane_centerline_mask_pred[i]]
+        # preds_new[token]['traffic_element'] = [pred for i, pred in
+        #                                        enumerate(preds_new[token]['traffic_element']) if traffic_element_mask_pred[i]]
+        preds_new[token]['topology_lclc'] = preds_new[token]['topology_lclc'][lane_centerline_mask_pred, :][:,
+                                            lane_centerline_mask_pred]
+        # preds_new[token]['topology_lcte'] = preds_new[token]['topology_lcte'][lane_centerline_mask_pred, :][:, traffic_element_mask_pred]
+        preds_new[token]['topology_lcte'] = preds_new[token]['topology_lcte'][lane_centerline_mask_pred, :]
+
+    return gts_new, preds_new
+
+
+def filter_centerlines_mask(gts, preds, gt_filter_masks, pred_filter_masks):
+    # gts_new = gts.copy()
+    # preds_new = preds.copy()
+    gts_new = copy.deepcopy(gts)
+    preds_new = copy.deepcopy(preds)
+
+    for token in gts.keys():
+        # filter
+        gts_new[token]['lane_centerline'] = [gt for i, gt in
+                                             enumerate(gts_new[token]['lane_centerline']) if gt_filter_masks[token][i]]
+        gts_new[token]['topology_lclc'] = gts_new[token]['topology_lclc'][gt_filter_masks[token], :][:,
+                                          gt_filter_masks[token]]
+        gts_new[token]['topology_lcte'] = gts_new[token]['topology_lcte'][gt_filter_masks[token], :]
+
+        preds_new[token]['lane_centerline'] = [pred for i, pred in
+                                               enumerate(preds_new[token]['lane_centerline']) if
+                                               pred_filter_masks[token][i]]
+        preds_new[token]['topology_lclc'] = preds_new[token]['topology_lclc'][pred_filter_masks[token], :][:,
+                                            pred_filter_masks[token]]
+        preds_new[token]['topology_lcte'] = preds_new[token]['topology_lcte'][pred_filter_masks[token], :]
+
+    return gts_new, preds_new
+

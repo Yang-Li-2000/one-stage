@@ -7,6 +7,7 @@
 import os
 import random
 import copy
+import pickle
 
 import numpy as np
 import torch
@@ -18,6 +19,7 @@ from mmcv.parallel import DataContainer as DC
 from mmdet.datasets import DATASETS
 from mmdet3d.datasets import Custom3DDataset
 from openlanev2.centerline.evaluation import evaluate as openlanev2_evaluate
+from openlanev2.centerline.evaluation import evaluate_by_distance, evaluate_by_intersection
 from openlanev2.utils import format_metric
 from openlanev2.centerline.visualization import draw_annotation_pv, assign_attribute, assign_topology
 
@@ -29,7 +31,7 @@ from ..core.visualizer.lane import show_bev_results
 class OpenLaneV2_subset_A_Dataset(Custom3DDataset):
     CAMS = ('ring_front_center', 'ring_front_left', 'ring_front_right',
             'ring_rear_left', 'ring_rear_right', 'ring_side_left', 'ring_side_right')
-    LANE_CLASSES = ('centerline',)
+    LANE_CLASSES = ('centerline')
     TE_CLASSES = ('traffic_light', 'road_sign')
     TE_ATTR_CLASSES = ('unknown', 'red', 'green', 'yellow',
                        'go_straight', 'turn_left', 'turn_right',
@@ -68,9 +70,17 @@ class OpenLaneV2_subset_A_Dataset(Custom3DDataset):
         data_infos = mmcv.load(ann_file, file_format='pkl')
         if isinstance(data_infos, dict):
             if self.filter_map_change and self.split == 'train':
-                data_infos = [info for info in data_infos.values() if info['meta_data']['source_id'] not in self.MAP_CHANGE_LOGS]
+                # data_infos = [info for info in data_infos.values() if info['meta_data']['source_id'] not in self.MAP_CHANGE_LOGS]
+                data_infos = []
+                data_keys = []
+                for key, info in data_infos.items():
+                    if info['meta_data']['source_id'] not in self.MAP_CHANGE_LOGS:
+                        data_infos.append(info)
+                        data_keys.append(key)
             else:
-                data_infos = list(data_infos.values())
+                # data_infos = list(data_infos.values())
+                data_keys, data_infos = zip(*data_infos.items())
+            self.data_keys = data_keys
         return data_infos
 
     def get_data_info(self, index):
@@ -334,7 +344,14 @@ class OpenLaneV2_subset_A_Dataset(Custom3DDataset):
 
         return pred_dict
 
-    def evaluate(self, results, logger=None, show=False, out_dir=None, **kwargs):
+    def evaluate(self, results,
+                 logger=None,
+                 show=False,
+                 out_dir=None,
+                 evaluate_normal=True,
+                 evaluate_by_dist=False,
+                 evaluate_by_int=False,
+                 **kwargs):
         """Evaluation in Openlane-V2 subset_A dataset.
 
         Args:
@@ -356,20 +373,33 @@ class OpenLaneV2_subset_A_Dataset(Custom3DDataset):
             self.show(results, out_dir)
             logger.info(f'Visualize done.')
 
-        logger.info(f'Starting format results...')
+        # logger.info(f'Starting format results...')
         gt_dict = self.format_openlanev2_gt()
         pred_dict = self.format_results(results)
+        if out_dir is not None:
+            mmcv.dump(pred_dict, f'{out_dir}/results.pkl')
 
-        logger.info(f'Starting openlanev2 evaluate...')
-        metric_results = openlanev2_evaluate(gt_dict, pred_dict)
-        format_metric(metric_results)
-        metric_results = {
-            'OpenLane-V2 Score': metric_results['OpenLane-V2 Score']['score'],
-            'DET_l': metric_results['OpenLane-V2 Score']['DET_l'],
-            'DET_t': metric_results['OpenLane-V2 Score']['DET_t'],
-            'TOP_ll': metric_results['OpenLane-V2 Score']['TOP_ll'],
-            'TOP_lt': metric_results['OpenLane-V2 Score']['TOP_lt'],
-        }
+        # logger.info(f'Starting openlanev2 evaluate...')
+        metric_results = {}
+        if evaluate_normal:
+            metric_normal = openlanev2_evaluate(gt_dict, pred_dict)
+            metric_results.update(metric_normal)
+            format_metric(metric_results)
+        if evaluate_by_dist:
+            metric_dist = evaluate_by_distance(gt_dict, pred_dict)
+            metric_results.update(metric_dist)
+            format_metric(metric_results)
+        if evaluate_by_int:
+            metric_int = evaluate_by_intersection(gt_dict, pred_dict)
+            metric_results.update(metric_int)
+            format_metric(metric_results)
+        # metric_results = {
+        #     'OpenLane-V2 Score': metric_results['OpenLane-V2 Score']['score'],
+        #     'DET_l': metric_results['OpenLane-V2 Score']['DET_l'],
+        #     'DET_t': metric_results['OpenLane-V2 Score']['DET_t'],
+        #     'TOP_ll': metric_results['OpenLane-V2 Score']['TOP_ll'],
+        #     'TOP_lt': metric_results['OpenLane-V2 Score']['TOP_lt'],
+        # }
         return metric_results
 
     def show(self, results, out_dir, score_thr=0.3, show_num=20, **kwargs):
@@ -417,8 +447,8 @@ class OpenLaneV2_subset_A_Dataset(Custom3DDataset):
                     pred_result,
                     cam_info['intrinsic'],
                     cam_info['extrinsic'],
-                    with_attribute=True if cam_name == self.CAMS[0] else False,
-                    with_topology=True if cam_name == self.CAMS[0] else False,
+                    with_attribute=True if cam_name == 'ring_front_center' else False,
+                    with_topology=True if cam_name == 'ring_front_center' else False,
                 )
                 pv_imgs.append(image_pv[..., ::-1])
 
@@ -501,3 +531,44 @@ class OpenLaneV2_subset_A_Dataset(Custom3DDataset):
         annotations['topology_lclc'] = annotations['topology_lclc'][lc_mask][:, lc_mask] > 0.5
         annotations['topology_lcte'] = annotations['topology_lcte'][lc_mask][:, te_mask] > 0.5
         return annotations
+
+
+@DATASETS.register_module()
+class OpenLaneV2_subset_A_GraphicalSDMapDataset(OpenLaneV2_subset_A_Dataset):
+
+    def __init__(self,
+                 data_root,
+                 ann_file,
+                 queue_length=1,
+                 filter_empty_te=False,
+                 split='train',
+                 filter_map_change=False,
+                 map_dir_prefix=None,
+                 map_file_ext=None,
+                 **kwargs):
+        super().__init__(data_root=data_root,
+                         ann_file=ann_file,
+                         queue_length=queue_length,
+                         filter_empty_te=filter_empty_te,
+                         split=split,
+                         filter_map_change=filter_map_change,
+                         **kwargs)
+        self.map_dir_prefix = map_dir_prefix
+        self.map_file_ext = map_file_ext
+
+    def get_data_info(self, index):
+        # split, segment_id, timestamp = self.data_infos[index]
+        split, segment_id, timestamp = self.data_keys[index]
+        input_dict = super().get_data_info(index=index)
+
+        if self.map_dir_prefix is None:
+            raise NotImplementedError("old version of dataloader rip, will update soon")
+        else:
+            sd_map_path = f'{self.data_root}/{self.map_dir_prefix}/{split}/{segment_id}/{timestamp}.{self.map_file_ext}'
+            sd_map = pickle.load(open(sd_map_path, 'rb'))
+
+        input_dict.update({
+            "sd_map": sd_map
+        })
+
+        return input_dict
