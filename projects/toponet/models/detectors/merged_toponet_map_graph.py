@@ -126,6 +126,10 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         self.rel_predictor_gate_tecl = nn.Linear(2 * embed_dims, 1)
         self.rel_predictor_gate_clcl = nn.Linear(2 * embed_dims, 1)
 
+        # bias initialization: initialize to ones
+        # nn.init.constant_(self.rel_predictor_gate_tecl.bias, 1.0)
+        # nn.init.constant_(self.rel_predictor_gate_clcl.bias, 1.0)
+
         # connectivity layers
         self.connectivity_layer_tecl = DeformableDetrMLPPredictionHead(
             input_dim=2*embed_dims,

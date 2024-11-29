@@ -349,6 +349,22 @@ optimizer = dict(
     paramwise_cfg=dict(
         custom_keys={
             'img_backbone': dict(lr_mult=0.1),
+
+            'proj_q_te': dict(lr_mult=1.0),
+            'proj_k_te': dict(lr_mult=1.0),
+            'proj_q_cl': dict(lr_mult=1.0),
+            'proj_k_cl': dict(lr_mult=1.0),
+
+            'final_sub_proj_clcl': dict(lr_mult=1.0),
+            'final_obj_proj_clcl': dict(lr_mult=1.0),
+            'final_sub_proj_tecl': dict(lr_mult=1.0),
+            'final_obj_proj_tecl': dict(lr_mult=1.0),
+
+            'rel_predictor_gate_tecl': dict(lr_mult=1.0),
+            'rel_predictor_gate_clcl': dict(lr_mult=1.0),
+
+            'connectivity_layer_tecl': dict(lr_mult=1.0),
+            'connectivity_layer_clcl': dict(lr_mult=1.0),
         }),
     weight_decay=0.01)
 
