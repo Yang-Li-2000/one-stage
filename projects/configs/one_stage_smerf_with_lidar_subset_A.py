@@ -45,7 +45,7 @@ bev_h_ = 100
 bev_w_ = 200
 
 model = dict(
-    type='MergedTopoNetMapGraph',
+    type='MergedTopoNetMapGraphLidar',
     img_backbone=dict(
         type='ResNet',
         depth=50,

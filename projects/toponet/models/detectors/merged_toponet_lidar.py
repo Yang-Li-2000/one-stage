@@ -29,7 +29,7 @@ from .model.deformable_detr import (
 
 
 @DETECTORS.register_module()
-class MergedTopoNetMapGraph(MVXTwoStageDetector):
+class MergedTopoNetMapGraphLidar(MVXTwoStageDetector):
 
     def __init__(self,
                  bev_constructor=None,
@@ -39,7 +39,7 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
                  video_test_mode=False,
                  **kwargs):
 
-        super(MergedTopoNetMapGraph, self).__init__(**kwargs)
+        super(MergedTopoNetMapGraphLidar, self).__init__(**kwargs)
 
         if map_encoder is not None:
             self.map_encoder_type = map_encoder['type']
