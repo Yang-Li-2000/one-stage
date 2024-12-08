@@ -25,6 +25,28 @@ from projects.bevformer.modules.decoder import CustomMSDeformableAttention
 
 from ...utils.builder import BEV_CONSTRUCTOR
 
+import torch.nn as nn
+from mmcv.utils import Registry, build_from_cfg
+FUSERS = Registry("fusers")
+from typing import List
+
+def build_fuser(cfg):
+    return FUSERS.build(cfg)
+
+@FUSERS.register_module()
+class ConvFuser(nn.Sequential):
+    def __init__(self, in_channels: int, out_channels: int) -> None:
+        self.in_channels = in_channels
+        self.out_channels = out_channels
+        super().__init__(
+            nn.Conv2d(sum(in_channels), out_channels, 3, padding=1, bias=False),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(True),
+        )
+
+    def forward(self, inputs: List[torch.Tensor]) -> torch.Tensor:
+        return super().forward(torch.cat(inputs, dim=1))
+
 
 @BEV_CONSTRUCTOR.register_module()
 class BEVFormerConstructer(BaseModule):
@@ -54,6 +76,7 @@ class BEVFormerConstructer(BaseModule):
                  encoder=None,
                  positional_encoding=None,
                  use_map_embeds=False,
+                 fuser=None,
                  **kwargs):
         super(BEVFormerConstructer, self).__init__(**kwargs)
         self.embed_dims = embed_dims
@@ -76,6 +99,9 @@ class BEVFormerConstructer(BaseModule):
         self.bev_h = bev_h
         self.bev_w = bev_w
         self.rotate_center = rotate_center
+
+        if fuser is not None:
+            self.fuser = build_fuser(fuser)
 
         self.init_layers()
 
@@ -120,7 +146,7 @@ class BEVFormerConstructer(BaseModule):
         xavier_init(self.can_bus_mlp, distribution='uniform', bias=0.)
 
     # @auto_fp16(apply_to=('mlvl_feats', 'prev_bev'))
-    def forward(self, mlvl_feats, img_metas, prev_bev=None, map_bev_feats=None, map_graph_feats=None, **kwargs):
+    def forward(self, mlvl_feats, img_metas, prev_bev=None, map_bev_feats=None, map_graph_feats=None, lidar_feat=None, **kwargs):
         """
         obtain bev features.
         """
@@ -264,7 +290,19 @@ class BEVFormerConstructer(BaseModule):
             map_graph_feats=map_graph_feats,
             map_graph_shapes=map_graph_shapes,
             **kwargs
-        )
+        ) # [1, 20000, 256]
+
+        # Fuse lidar features to bev_embed
+        if lidar_feat is not None:
+            bs = mlvl_feats[0].size(0)
+            bev_embed = bev_embed.view(bs, self.bev_h, self.bev_w, -1).permute(0,3,1,2).contiguous()
+            lidar_feat = lidar_feat.permute(0,1,3,2).contiguous() # B C H W
+            lidar_feat = nn.functional.interpolate(lidar_feat, size=(self.bev_h,self.bev_w), mode='bicubic', align_corners=False)
+            fused_bev = self.fuser([bev_embed, lidar_feat])
+            fused_bev = fused_bev.flatten(2).permute(0,2,1).contiguous()
+            bev_embed = fused_bev
+        elif self.fuser is not None:
+            raise NotImplementedError()
 
         return bev_embed
 

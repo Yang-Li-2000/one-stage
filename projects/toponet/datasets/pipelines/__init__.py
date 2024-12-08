@@ -6,6 +6,7 @@ from .transform_3d_lane import LaneParameterize3D, LaneLengthFilter
 from .formating import CustomFormatBundle3DLane
 from .loading import CustomLoadMultiViewImageFromFiles, LoadAnnotations3DLane, CustomLoadMultiViewImageFromFilesToponet
 from .transforms import *
+from .loading import CustomLoadPointsFromFile, CustomLoadPointsFromMultiSweeps, CustomLoadMultiViewImageFromFiles
 
 __all__ = [
     'PadMultiViewImage', 'NormalizeMultiviewImage', 
