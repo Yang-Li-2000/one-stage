@@ -298,7 +298,33 @@ class BEVFormerConstructer(BaseModule):
             bev_embed = bev_embed.view(bs, self.bev_h, self.bev_w, -1).permute(0,3,1,2).contiguous()
             lidar_feat = lidar_feat.permute(0,1,3,2).contiguous() # B C H W
             lidar_feat = nn.functional.interpolate(lidar_feat, size=(self.bev_h,self.bev_w), mode='bicubic', align_corners=False)
+
+            ####################################################################
+            # Save original bev_embed and lidar_feat
+            if False:
+                import pickle
+                dir_name = 'debug_lidar/'
+                path_original_bev = dir_name + 'original_' + img_metas[0]['scene_token'] + '.pkl'
+                path_lidar = dir_name + 'lidar_' + img_metas[0]['scene_token'] + '.pkl'
+                with open(path_original_bev, 'wb') as f:
+                    # print("original:", bev_embed.shape)
+                    pickle.dump(bev_embed.cpu(), f)
+                with open(path_lidar, 'wb') as f:
+                    # print("lidar:", lidar_feat.shape)
+                    pickle.dump(lidar_feat.cpu(), f)
+            ####################################################################
+
             fused_bev = self.fuser([bev_embed, lidar_feat])
+
+            ####################################################################
+            # Save fused_bev
+            if False:
+                path_fused = dir_name + 'fused_' + img_metas[0]['scene_token'] + '.pkl'
+                with open(path_fused, 'wb') as f:
+                    # print("fused:", fused_bev.shape)
+                    pickle.dump(fused_bev.cpu(), f)
+            ####################################################################
+
             fused_bev = fused_bev.flatten(2).permute(0,2,1).contiguous()
             bev_embed = fused_bev
         elif self.fuser is not None:

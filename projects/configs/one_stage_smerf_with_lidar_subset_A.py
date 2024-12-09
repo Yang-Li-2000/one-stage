@@ -4,7 +4,7 @@ custom_imports = dict(imports=['projects.bevformer', 'projects.toponet'])
 # If point cloud range is changed, the models should also change their point
 # cloud range accordingly
 point_cloud_range = [-51.2, -25.6, -2.3, 51.2, 25.6, 1.7]
-lidar_point_cloud_range = [-15.0, -30.0, -5.0, 15.0, 30.0, 3.0]
+lidar_point_cloud_range = point_cloud_range
 voxel_size = [0.1, 0.1, 0.2] # TODO: check if need to modify
 
 img_norm_cfg = dict(
@@ -55,12 +55,11 @@ model = dict(
         voxelize=dict(max_num_points=10,point_cloud_range=lidar_point_cloud_range,voxel_size=voxel_size,max_voxels=[90000, 120000]),
         backbone=dict(
             type='CustomSparseEncoder',
-            in_channels=5,
+            in_channels=3,
             sparse_shape=[300, 600, 41],
             output_channels=128,
             order=('conv', 'norm', 'act'),
-            encoder_channels=((16, 16, 32), (32, 32, 64), (64, 64, 128), (128,
-                                                                        128)),
+            encoder_channels=((16, 16, 32), (32, 32, 64), (64, 64, 128), (128, 128)),
             encoder_paddings=([0, 0, 1], [0, 0, 1], [0, 0, [1, 1, 0]], [0, 0]),
             block_type='basicblock'
         ),
@@ -304,7 +303,7 @@ use_dim=3
 train_pipeline = [
     dict(type='CustomLoadMultiViewImageFromFilesToponet', to_float32=True),
     dict(type='CustomLoadPointsFromFile', coord_type='LIDAR', load_dim=load_dim, use_dim=use_dim, reduce_beams=reduce_beams),
-    dict(type='CustomLoadPointsFromMultiSweeps', sweeps_num=9, load_dim=load_dim, use_dim=use_dim, reduce_beams=reduce_beams, pad_empty_sweeps=True, remove_close=True),
+    dict(type='CustomLoadPointsFromMultiSweeps', sweeps_num=1, load_dim=load_dim, use_dim=use_dim, reduce_beams=reduce_beams, pad_empty_sweeps=True, remove_close=True),
     dict(type='CustomPointsRangeFilter', point_cloud_range=lidar_point_cloud_range),
     dict(type='LoadAnnotations3DLane',
          with_lane_3d=True, with_lane_label_3d=True, with_lane_adj=True,
@@ -327,7 +326,7 @@ train_pipeline = [
 test_pipeline = [
     dict(type='CustomLoadMultiViewImageFromFilesToponet', to_float32=True),
     dict(type='CustomLoadPointsFromFile', coord_type='LIDAR', load_dim=load_dim, use_dim=use_dim, reduce_beams=reduce_beams),
-    dict(type='CustomLoadPointsFromMultiSweeps', sweeps_num=9, load_dim=load_dim, use_dim=use_dim, reduce_beams=reduce_beams, pad_empty_sweeps=True, remove_close=True),
+    dict(type='CustomLoadPointsFromMultiSweeps', sweeps_num=1, load_dim=load_dim, use_dim=use_dim, reduce_beams=reduce_beams, pad_empty_sweeps=True, remove_close=True),
     dict(type='CustomPointsRangeFilter', point_cloud_range=lidar_point_cloud_range),
     dict(type='CropFrontViewImageForAv2'),
     dict(type='RandomScaleImageMultiViewImage', scales=[0.5]),

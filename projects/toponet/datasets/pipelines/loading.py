@@ -13,6 +13,7 @@ import os
 from mmdet3d.core.points import BasePoints, get_points_type
 # from .loading_utils import load_augmented_point_cloud, reduce_LiDAR_beams
 from av2.utils.io import read_lidar_sweep
+import pandas as pd
 
 __all__ = ["load_augmented_point_cloud", "reduce_LiDAR_beams"]
 
@@ -402,6 +403,27 @@ class CustomLoadPointsFromMultiSweeps:
         points = points.cat(sweep_points_list)
         points = points[:, self.use_dim]
         results["points"] = points
+
+        ########################################################################
+        if False:
+            print()
+            print()
+            print(points.tensor[:, 0].min(), points.tensor[:, 0].max(), points.tensor[:, 0].mean())
+            print(points.tensor[:, 1].min(), points.tensor[:, 1].max(), points.tensor[:, 1].mean())
+            print(points.tensor[:, 2].min(), points.tensor[:, 2].max(), points.tensor[:, 2].mean())
+            save_path = 'debug_points/' + 'multi_sweep_points.ply'
+            with open(save_path, 'w') as file:
+                file.write("ply\n")
+                file.write("format ascii 1.0\n")
+                file.write(f"element vertex {points.shape[0]}\n")
+                file.write("property float x\n")
+                file.write("property float y\n")
+                file.write("property float z\n")
+                file.write("end_header\n")
+                for point in points.tensor:
+                    file.write(f"{point[0]} {point[1]} {point[2]}\n")
+        ########################################################################
+
         return results
 
     def __repr__(self):
@@ -494,7 +516,29 @@ class CustomLoadPointsFromFile:
         lidar_path = results["lidar_path"]
         str_lidar_path = str(lidar_path)
         lidar_time_stamp = int(str_lidar_path[str_lidar_path.rfind('/')+1:str_lidar_path.rfind('.feather')])
-        points = read_lidar_sweep(lidar_path)
+        # points = read_lidar_sweep(lidar_path)
+        points = pd.read_feather(lidar_path).to_numpy()[:, self.use_dim]
+
+        ########################################################################
+        if False:
+            print()
+            print()
+            print(points[:, 0].min(), points[:, 0].max(), points[:, 0].mean())
+            print(points[:, 1].min(), points[:, 1].max(), points[:, 1].mean())
+            print(points[:, 2].min(), points[:, 2].max(), points[:, 2].mean())
+            save_path = 'debug_points/' + 'loaded_points.ply'
+            with open(save_path, 'w') as file:
+                file.write("ply\n")
+                file.write("format ascii 1.0\n")
+                file.write(f"element vertex {points.shape[0]}\n")
+                file.write("property float x\n")
+                file.write("property float y\n")
+                file.write("property float z\n")
+                file.write("end_header\n")
+                for point in points:
+                    file.write(f"{point[0]} {point[1]} {point[2]}\n")
+        ########################################################################
+
         points = np.concatenate([points, np.zeros([points.shape[0], 2], dtype=points.dtype)], axis=1)
 
         # points = self._load_points(lidar_path)
