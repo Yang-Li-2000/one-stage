@@ -180,8 +180,7 @@ class BEVFormerConstructer(BaseModule):
                   np.sin(bev_angle / 180 * np.pi) / grid_length_x / self.bev_w
         shift_y = shift_y * self.use_shift
         shift_x = shift_x * self.use_shift
-        shift = bev_queries.new_tensor(
-            [shift_x, shift_y]).permute(1, 0)  # xy, bs -> bs, xy
+        shift = bev_queries.new_tensor(np.array([shift_x, shift_y])).permute(1, 0)  # xy, bs -> bs, xy
 
         if prev_bev is not None:
             if prev_bev.shape[1] == self.bev_h * self.bev_w:
@@ -199,8 +198,7 @@ class BEVFormerConstructer(BaseModule):
                     prev_bev[:, i] = tmp_prev_bev[:, 0]
 
         # add can bus signals
-        can_bus = bev_queries.new_tensor(
-            [each['can_bus'] for each in img_metas])  # [:, :]
+        can_bus = bev_queries.new_tensor(np.array([each['can_bus'] for each in img_metas]))  # [:, :]
         can_bus = self.can_bus_mlp(can_bus)[None, :, :]
         bev_queries = bev_queries + can_bus * self.use_can_bus
 
@@ -296,7 +294,6 @@ class BEVFormerConstructer(BaseModule):
         if lidar_feat is not None:
             bs = mlvl_feats[0].size(0)
             bev_embed = bev_embed.view(bs, self.bev_h, self.bev_w, -1).permute(0,3,1,2).contiguous()
-            lidar_feat = lidar_feat.permute(0,1,3,2).contiguous() # B C H W
             lidar_feat = nn.functional.interpolate(lidar_feat, size=(self.bev_h,self.bev_w), mode='bicubic', align_corners=False)
 
             ####################################################################

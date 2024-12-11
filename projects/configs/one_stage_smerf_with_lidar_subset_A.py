@@ -4,7 +4,9 @@ custom_imports = dict(imports=['projects.bevformer', 'projects.toponet'])
 # If point cloud range is changed, the models should also change their point
 # cloud range accordingly
 point_cloud_range = [-51.2, -25.6, -2.3, 51.2, 25.6, 1.7]
-lidar_point_cloud_range = point_cloud_range
+lidar_point_cloud_range = point_cloud_range # 1024, 512, 20
+# lidar_point_cloud_range = [-30.0, -15.0, -5.0, 30.0, 15.0, 3.0]
+
 voxel_size = [0.1, 0.1, 0.2] # TODO: check if need to modify
 
 img_norm_cfg = dict(
@@ -56,11 +58,14 @@ model = dict(
         backbone=dict(
             type='CustomSparseEncoder',
             in_channels=3,
-            sparse_shape=[300, 600, 41],
+            sparse_shape=[20, 512, 1024],
             output_channels=128,
             order=('conv', 'norm', 'act'),
             encoder_channels=((16, 16, 32), (32, 32, 64), (64, 64, 128), (128, 128)),
-            encoder_paddings=([0, 0, 1], [0, 0, 1], [0, 0, [1, 1, 0]], [0, 0]),
+            encoder_paddings=([1, 1, 1],
+                              [1, 1, 1],
+                              [1, 1, 1],
+                              [1, 1]),
             block_type='basicblock'
         ),
     ),

@@ -3,7 +3,7 @@ set -x
 
 timestamp=`date +"%y%m%d.%H%M%S"`
 
-WORK_DIR=work_dirs/1207_one_stage_smerf_with_lidar
+WORK_DIR=work_dirs/1210_one_stage_smerf_with_lidar
 CONFIG=projects/configs/one_stage_smerf_with_lidar_subset_A.py
 
 GPUS=$1

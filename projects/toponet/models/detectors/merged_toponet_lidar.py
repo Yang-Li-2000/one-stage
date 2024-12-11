@@ -992,8 +992,8 @@ class CustomSparseEncoder(nn.Module):
         self.conv_out = make_sparse_convmodule(
             encoder_out_channels,
             self.output_channels,
-            kernel_size=(1, 1, 3),
-            stride=(1, 1, 2),
+            kernel_size=(2, 1, 1),
+            stride=(1, 1, 1),
             norm_cfg=norm_cfg,
             padding=0,
             indice_key="spconv_down2",
@@ -1028,8 +1028,7 @@ class CustomSparseEncoder(nn.Module):
         # [200, 176, 5] -> [200, 176, 2]
         out = self.conv_out(encode_features[-1])
         spatial_features = out.dense()
-        N, C, H, W, D = spatial_features.shape
-        spatial_features = spatial_features.permute(0, 1, 4, 2, 3).contiguous()
+        N, C, D, H, W = spatial_features.shape
         spatial_features = spatial_features.view(N, C * D, H, W)
 
         return spatial_features
@@ -1782,6 +1781,23 @@ class MergedTopoNetMapGraphLidar(MVXTwoStageDetector):
         results_list = [dict() for i in range(len(img_metas))]
         new_prev_bev, bbox_results, lane_results, lclc_results, lcte_results = self.simple_test_pts(
             img_feats, map_graph_feats, img_metas, img, prev_bev, points=points, rescale=rescale)
+
+        ########################################################################
+        if False:
+            import torch
+            import numpy as np
+            from plyfile import PlyData, PlyElement
+            # Assuming points[0] is your tensor
+            points = points[0].cpu().numpy()  # Move to CPU and convert to NumPy array
+            # Create vertices for PLY format
+            vertices = np.array([tuple(point) for point in points], dtype=[('x', 'f4'), ('y', 'f4'), ('z', 'f4')])
+            # Create PLY element
+            ply_element = PlyElement.describe(vertices, 'vertex')
+            # Write to PLY file
+            ply_file_path = 'debug_lidar/current_points.ply'
+            PlyData([ply_element]).write(ply_file_path)
+        ########################################################################
+
         for result_dict, bbox, lane, lclc, lcte in zip(results_list, bbox_results, lane_results, lclc_results,
                                                        lcte_results):
             result_dict['bbox_results'] = bbox
