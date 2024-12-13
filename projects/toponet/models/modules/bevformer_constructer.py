@@ -150,6 +150,27 @@ class BEVFormerConstructer(BaseModule):
         """
         obtain bev features.
         """
+
+        if True:
+
+            # return nn.functional.interpolate(lidar_feat, size=(self.bev_h,self.bev_w), mode='bicubic', align_corners=False).flatten(2).permute(0,2,1).contiguous()
+            # Flip x
+            # return torch.flip(nn.functional.interpolate(lidar_feat, size=(self.bev_h,self.bev_w), mode='bicubic', align_corners=False), dims=[2]).flatten(2).permute(0,2,1).contiguous()
+            # Flip xy
+            result = torch.flip(nn.functional.interpolate(lidar_feat, size=(self.bev_h, self.bev_w), mode='bicubic', align_corners=False), dims=[2, 3]).flatten(2).permute(0, 2, 1).contiguous()
+
+            if False:
+                import pickle
+                dir_name = 'debug_lidar/'
+                path_lidar = dir_name + 'lidar_' + img_metas[0]['scene_token'] + '_' + str(img_metas[0]['sample_idx']) + '.pkl'
+                with open(path_lidar, 'wb') as f:
+                    # print("lidar:", lidar_feat.shape)
+                    pickle.dump(torch.flip(nn.functional.interpolate(lidar_feat, size=(self.bev_h, self.bev_w), mode='bicubic', align_corners=False), dims=[2, 3]).cpu(), f)
+
+
+            return result
+
+
         bs, num_cam, _, _, _ = mlvl_feats[0].shape
         dtype = mlvl_feats[0].dtype
 
@@ -301,8 +322,8 @@ class BEVFormerConstructer(BaseModule):
             if False:
                 import pickle
                 dir_name = 'debug_lidar/'
-                path_original_bev = dir_name + 'original_' + img_metas[0]['scene_token'] + '.pkl'
-                path_lidar = dir_name + 'lidar_' + img_metas[0]['scene_token'] + '.pkl'
+                path_original_bev = dir_name + 'original_' + img_metas[0]['scene_token'] + '_' + str(img_metas[0]['sample_idx']) +'.pkl'
+                path_lidar = dir_name + 'lidar_' + img_metas[0]['scene_token'] + '_' + str(img_metas[0]['sample_idx']) + '.pkl'
                 with open(path_original_bev, 'wb') as f:
                     # print("original:", bev_embed.shape)
                     pickle.dump(bev_embed.cpu(), f)
@@ -316,7 +337,7 @@ class BEVFormerConstructer(BaseModule):
             ####################################################################
             # Save fused_bev
             if False:
-                path_fused = dir_name + 'fused_' + img_metas[0]['scene_token'] + '.pkl'
+                path_fused = dir_name + 'fused_' + img_metas[0]['scene_token'] + '_' + str(img_metas[0]['sample_idx']) + '.pkl'
                 with open(path_fused, 'wb') as f:
                     # print("fused:", fused_bev.shape)
                     pickle.dump(fused_bev.cpu(), f)

@@ -300,7 +300,7 @@ def main():
     model.pts_bbox_head.lcte_branches[-1].MLP_o1 = None
     model.pts_bbox_head.lcte_branches[-1].MLP_o2 = None
     model.pts_bbox_head.lcte_branches[-1].classifier = None
-    # cfg.find_unused_parameters = True
+    cfg.find_unused_parameters = True
 
     logger.info(f'Model:\n{model}')
     datasets = [build_dataset(cfg.data.train)]
