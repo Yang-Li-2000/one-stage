@@ -44,21 +44,32 @@ _num_heads_ = 4
 bev_h_ = 100
 bev_w_ = 200
 
+# checkpoint_file = 'https://github.com/SwinTransformer/storage/releases/download/v1.0.0/swin_small_patch4_window7_224.pth'
+checkpoint_file = 'ckpts/swin_small_patch4_window7_224.pth'
+swin_channels = [192, 384, 768]
+
 model = dict(
     type='MergedTopoNetMapGraph',
     img_backbone=dict(
-        type='ResNet',
-        depth=50,
-        num_stages=4,
+        type='SwinTransformer',
+        embed_dims=96,
+        depths=[2, 2, 18, 2],
+        num_heads=[3, 6, 12, 24],
+        window_size=7,
+        mlp_ratio=4,
+        qkv_bias=True,
+        qk_scale=None,
+        drop_rate=0.,
+        attn_drop_rate=0.,
+        drop_path_rate=0.2,
+        patch_norm=True,
         out_indices=(1, 2, 3),
-        frozen_stages=1,
-        norm_cfg=dict(type='BN', requires_grad=False),
-        norm_eval=True,
-        style='pytorch',
-        init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet50')),
+        with_cp=False,
+        convert_weights=True,
+        init_cfg=dict(type='Pretrained', checkpoint=checkpoint_file)),
     img_neck=dict(
         type='FPN',
-        in_channels=[512, 1024, 2048],
+        in_channels=swin_channels,
         out_channels=_dim_,
         start_level=0,
         add_extra_convs='on_output',
