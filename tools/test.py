@@ -243,8 +243,8 @@ def main():
         print()
         print()
 
-        torch.cuda.synchronize()
-        start_time_total = time.time()
+        # torch.cuda.synchronize()
+        # start_time_total = time.time()
 
         if not distributed:
             if "gpu_ids" in cfg:
@@ -264,9 +264,9 @@ def main():
                                      tmpdir=os.path.join(args.out_dir, '.dist_test'), 
                                      gpu_collect=args.gpu_collect)
 
-        torch.cuda.synchronize()
-        end_time_total = time.time()
-        counts.total_time_gpu_test += end_time_total - start_time_total
+        # torch.cuda.synchronize()
+        # end_time_total = time.time()
+        # counts.total_time_gpu_test += end_time_total - start_time_total
 
         print()
         print()

@@ -190,8 +190,8 @@ class TopoNet(MVXTwoStageDetector):
 
     def forward_test(self, img_metas, img=None, **kwargs):
 
-        torch.cuda.synchronize()
-        start_time_forward_test = time.time()
+        # torch.cuda.synchronize()
+        # start_time_forward_test = time.time()
 
         for var, name in [(img_metas, 'img_metas')]:
             if not isinstance(var, list):
@@ -219,24 +219,24 @@ class TopoNet(MVXTwoStageDetector):
             img_metas[0]['can_bus'][-1] = 0
             img_metas[0]['can_bus'][:3] = 0
 
-        torch.cuda.synchronize()
-        start_time_simple_test = time.time()
+        # torch.cuda.synchronize()
+        # start_time_simple_test = time.time()
 
         new_prev_bev, results_list = self.simple_test(
             img_metas, img, prev_bev=self.prev_frame_info['prev_bev'], **kwargs)
 
-        torch.cuda.synchronize()
-        end_time_simple_test = time.time()
-        counts.time_simple_test += end_time_simple_test - start_time_simple_test
+        # torch.cuda.synchronize()
+        # end_time_simple_test = time.time()
+        # counts.time_simple_test += end_time_simple_test - start_time_simple_test
 
         # During inference, we save the BEV features and ego motion of each timestamp.
         self.prev_frame_info['prev_pos'] = tmp_pos
         self.prev_frame_info['prev_angle'] = tmp_angle
         self.prev_frame_info['prev_bev'] = new_prev_bev
 
-        torch.cuda.synchronize()
-        end_time_forward_test = time.time()
-        counts.time_forward_test += end_time_forward_test - start_time_forward_test
+        # torch.cuda.synchronize()
+        # end_time_forward_test = time.time()
+        # counts.time_forward_test += end_time_forward_test - start_time_forward_test
 
         return results_list
 
@@ -256,35 +256,35 @@ class TopoNet(MVXTwoStageDetector):
                     crop_shape=img_meta['crop_shape'][0]))
             img_meta['batch_input_shape'] = batch_input_shape
 
-        torch.cuda.synchronize()
-        start_time_bbox_head = time.time()
+        # torch.cuda.synchronize()
+        # start_time_bbox_head = time.time()
 
         bbox_outs = self.bbox_head(front_view_img_feats, bbox_img_metas)
 
-        torch.cuda.synchronize()
-        end_time_bbox_head = time.time()
+        # torch.cuda.synchronize()
+        # end_time_bbox_head = time.time()
 
         bbox_results = self.bbox_head.get_bboxes(bbox_outs, bbox_img_metas, rescale=rescale)
         te_feats = bbox_outs['history_states']
         te_cls_scores = bbox_outs['all_cls_scores']
 
-        torch.cuda.synchronize()
-        start_time_bev = time.time()
+        # torch.cuda.synchronize()
+        # start_time_bev = time.time()
         bev_feats = self.bev_constructor(x, img_metas, prev_bev)
-        torch.cuda.synchronize()
-        end_time_bev = time.time()
+        # torch.cuda.synchronize()
+        # end_time_bev = time.time()
 
 
-        torch.cuda.synchronize()
-        start_time_pts_head = time.time()
+        # torch.cuda.synchronize()
+        # start_time_pts_head = time.time()
 
         outs = self.pts_bbox_head(x, bev_feats, img_metas, te_feats, te_cls_scores)
 
-        torch.cuda.synchronize()
-        end_time_pts_head = time.time()
+        # torch.cuda.synchronize()
+        # end_time_pts_head = time.time()
 
-        counts.time_bev += end_time_bev - start_time_bev
-        counts.time_decoder += (end_time_bbox_head - start_time_bbox_head) + (end_time_pts_head - start_time_pts_head)
+        # counts.time_bev += end_time_bev - start_time_bev
+        # counts.time_decoder += (end_time_bbox_head - start_time_bbox_head) + (end_time_pts_head - start_time_pts_head)
 
 
         lane_results, lclc_results, lcte_results = self.pts_bbox_head.get_lanes(

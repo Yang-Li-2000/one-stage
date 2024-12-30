@@ -222,8 +222,8 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         te_feats = None
         te_cls_scores = None
 
-        torch.cuda.synchronize()
-        start_time_bev = time.time()
+        # torch.cuda.synchronize()
+        # start_time_bev = time.time()
 
         # bev_feats = self.bev_constructor(img_feats, img_metas, prev_bev)
         # map_graph_feats is already provided, get bev_feats directly
@@ -234,12 +234,12 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
             map_graph_feats = self.extract_map_feat(map_graph=map_graph, **kwargs)
             bev_feats = self.bev_constructor(img_feats, img_metas, map_graph_feats=map_graph_feats, prev_bev=prev_bev)
 
-        torch.cuda.synchronize()
-        end_time_bev = time.time()
-        counts.time_bev += end_time_bev - start_time_bev
+        # torch.cuda.synchronize()
+        # end_time_bev = time.time()
+        # counts.time_bev += end_time_bev - start_time_bev
 
-        torch.cuda.synchronize()
-        start_time_decoder = time.time()
+        # torch.cuda.synchronize()
+        # start_time_decoder = time.time()
 
         # 2. go through the first half
         outputs_te_head_first_half = self.bbox_head.forward_first_half(front_view_img_feats, bbox_img_metas)
@@ -552,9 +552,9 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         outs['all_lcte_preds'] = [pred_connectivity_tecl]
 
 
-        torch.cuda.synchronize()
-        end_time_decoder = time.time()
-        counts.time_decoder += end_time_decoder - start_time_decoder
+        # torch.cuda.synchronize()
+        # end_time_decoder = time.time()
+        # counts.time_decoder += end_time_decoder - start_time_decoder
 
         return bbox_outs, outs, bev_feats
 
@@ -626,8 +626,8 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
 
     def forward_test(self, img_metas, img=None, map_graph=None, **kwargs):
 
-        torch.cuda.synchronize()
-        start_time_forward_test = time.time()
+        # torch.cuda.synchronize()
+        # start_time_forward_test = time.time()
 
         for var, name in [(img_metas, 'img_metas')]:
             if not isinstance(var, list):
@@ -656,24 +656,24 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
             img_metas[0]['can_bus'][:3] = 0
 
         # Total time
-        torch.cuda.synchronize()
-        start_time = time.time()
+        # torch.cuda.synchronize()
+        # start_time = time.time()
 
         new_prev_bev, results_list = self.simple_test(
             img_metas, img, map_graph, prev_bev=self.prev_frame_info['prev_bev'], **kwargs)
 
-        torch.cuda.synchronize()
-        end_time = time.time()
-        counts.time_simple_test += end_time - start_time
+        # torch.cuda.synchronize()
+        # end_time = time.time()
+        # counts.time_simple_test += end_time - start_time
 
         # During inference, we save the BEV features and ego motion of each timestamp.
         self.prev_frame_info['prev_pos'] = tmp_pos
         self.prev_frame_info['prev_angle'] = tmp_angle
         self.prev_frame_info['prev_bev'] = new_prev_bev
 
-        torch.cuda.synchronize()
-        end_time_forward_test = time.time()
-        counts.time_forward_test += end_time_forward_test - start_time_forward_test
+        # torch.cuda.synchronize()
+        # end_time_forward_test = time.time()
+        # counts.time_forward_test += end_time_forward_test - start_time_forward_test
 
         return results_list
 
