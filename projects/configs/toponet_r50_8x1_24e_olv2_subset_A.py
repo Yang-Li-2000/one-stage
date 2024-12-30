@@ -19,7 +19,7 @@ input_modality = dict(
 num_cams = 7
 pts_dim = 3
 
-dataset_type = 'OpenLaneV2_subset_A_Dataset'
+dataset_type = 'Original_OpenLaneV2_subset_A_Dataset'
 data_root = 'data/OpenLane-V2/'
 
 para_method = 'fix_pts_interp'
