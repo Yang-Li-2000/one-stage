@@ -10,6 +10,8 @@ import numpy as np
 import torch
 from torch import nn
 
+from . import counts
+
 from mmcv.runner import force_fp32, auto_fp16
 from mmdet.models import DETECTORS
 from mmdet.models.builder import build_head
@@ -220,6 +222,9 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         te_feats = None
         te_cls_scores = None
 
+        torch.cuda.synchronize()
+        start_time_bev = time.time()
+
         # bev_feats = self.bev_constructor(img_feats, img_metas, prev_bev)
         # map_graph_feats is already provided, get bev_feats directly
         if map_x is not None:
@@ -228,6 +233,13 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         elif map_graph is not None:
             map_graph_feats = self.extract_map_feat(map_graph=map_graph, **kwargs)
             bev_feats = self.bev_constructor(img_feats, img_metas, map_graph_feats=map_graph_feats, prev_bev=prev_bev)
+
+        torch.cuda.synchronize()
+        end_time_bev = time.time()
+        counts.time_bev += end_time_bev - start_time_bev
+
+        torch.cuda.synchronize()
+        start_time_decoder = time.time()
 
         # 2. go through the first half
         outputs_te_head_first_half = self.bbox_head.forward_first_half(front_view_img_feats, bbox_img_metas)
@@ -375,6 +387,10 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         else:
             outputs_cl_decoder = (query_cl, reference_points_cl)
 
+
+        # torch.cuda.synchronize()
+        # start_time_egtr = time.time()
+
         # Relation prediction using Q and K
         bsz = reference_points_te.shape[0]
         num_object_queries = self.num_object_queries
@@ -382,6 +398,9 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
 
         # Unscaling & stacking attention queries
         device = decoder_attention_queries_te[0].device
+
+        # torch.cuda.synchronize()
+        # start_time_egtr_proj = time.time()
         # For TE
         QK_te_shape = [6, 100, 1, 256]
         projected_q_te = torch.empty(QK_te_shape).to(device)  # Allocate once
@@ -410,9 +429,24 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         decoder_attention_keys_cl = projected_k_cl.permute(2, 1, 0, 3)
         del projected_k_cl
 
+        # torch.cuda.synchronize()
+        # end_time_egtr_proj = time.time()
+        # counts.time_egtr_proj += end_time_egtr_proj - start_time_egtr_proj
+
+
+        # torch.cuda.synchronize()
+        # start_time_egtr_concat = time.time()
+
         # concat before pairwise concat
         decoder_attention_queries = torch.cat([decoder_attention_queries_te, decoder_attention_queries_cl], dim=1)
         decoder_attention_keys = torch.cat([decoder_attention_keys_te, decoder_attention_keys_cl], dim=1)
+
+        # torch.cuda.synchronize()
+        # end_time_egtr_concat = time.time()
+        # counts.time_egtr_concat += end_time_egtr_concat - start_time_egtr_concat
+
+        # torch.cuda.synchronize()
+        # start_time_egtr_pairwise_concat = time.time()
 
         # Pairwise concatenation
         decoder_attention_queries = decoder_attention_queries.unsqueeze(2).expand(
@@ -425,7 +459,16 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
             [decoder_attention_queries, decoder_attention_keys],
             dim=-1
         )  # [bsz, num_object_queries, num_object_queries, num_layers, 2*d_model]
+
+        # torch.cuda.synchronize()
+        # end_time_egtr_pairwise_concat = time.time()
+        # counts.time_egtr_pairwise_concat += end_time_egtr_pairwise_concat - start_time_egtr_pairwise_concat
+
         del decoder_attention_queries, decoder_attention_keys
+
+
+        # torch.cuda.synchronize()
+        # start_time_egtr_final_proj = time.time()
 
         # add final hidden represetations separatly for tecl and clcl.
         #  Specifically, clcl should only receive query_cl while tecl receives both
@@ -442,13 +485,11 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
             ],
             dim=-2,
         )
-        del subject_output_clcl, object_output_clcl
 
         # tecl
         sequence_output_tecl = torch.cat([query_te, query_cl], dim=0).permute(1, 0, 2)
         subject_output_tecl = self.final_sub_proj_tecl(sequence_output_tecl).unsqueeze(2).expand(-1, -1, num_object_queries, -1)
         object_output_tecl = self.final_obj_proj_tecl(sequence_output_tecl).unsqueeze(1).expand(-1, num_object_queries, -1, -1)
-        del sequence_output_tecl
         relation_source_tecl = torch.cat(
             [
                 relation_source[:, :, :],
@@ -457,7 +498,17 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
             ],
             dim=-2,
         )
+
+        # torch.cuda.synchronize()
+        # end_time_egtr_final_proj = time.time()
+        # counts.time_egtr_final_proj += end_time_egtr_final_proj - start_time_egtr_final_proj
+
+        del sequence_output_tecl
+        del subject_output_clcl, object_output_clcl
         del subject_output_tecl, object_output_tecl
+
+        # torch.cuda.synchronize()
+        # start_time_egtr_gated_sum = time.time()
 
         # Gated sum
         relation_source_tecl = relation_source_tecl[:, self.nq_te:, :self.nq_te]
@@ -467,12 +518,29 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         rel_gate_clcl = self.rel_predictor_gate_clcl(relation_source_clcl).sigmoid_()
         gated_relation_source_clcl = (rel_gate_clcl * relation_source_clcl).sum(dim=-2)
 
+        # torch.cuda.synchronize()
+        # end_time_egtr_gated_sum = time.time()
+        # counts.time_egtr_gated_sum += end_time_egtr_gated_sum - start_time_egtr_gated_sum
+
+
+        # torch.cuda.synchronize()
+        # start_time_egtr_connectivity = time.time()
+
         # Connectivity
         pred_connectivity_tecl = self.connectivity_layer_tecl(gated_relation_source_tecl)
         pred_connectivity_clcl = self.connectivity_layer_clcl(gated_relation_source_clcl)
+
+        # torch.cuda.synchronize()
+        # end_time_egtr_connectivity = time.time()
+        # counts.time_egtr_connectivity += end_time_egtr_connectivity - start_time_egtr_connectivity
+
         del relation_source_tecl, relation_source_clcl, gated_relation_source_tecl, gated_relation_source_clcl
         del rel_gate_tecl, rel_gate_clcl
         del relation_source
+
+        # torch.cuda.synchronize()
+        # end_time_egtr = time.time()
+        # counts.time_egtr += end_time_egtr - start_time_egtr
 
         # 4. go through the second half
         outputs_te_transformer_second_half = self.bbox_head.transformer.forward_second_half(*outputs_te_decoder, outputs_te_transformer_first_half['init_reference_out'])
@@ -482,6 +550,11 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
 
         outs['all_lclc_preds'] = [pred_connectivity_clcl]
         outs['all_lcte_preds'] = [pred_connectivity_tecl]
+
+
+        torch.cuda.synchronize()
+        end_time_decoder = time.time()
+        counts.time_decoder += end_time_decoder - start_time_decoder
 
         return bbox_outs, outs, bev_feats
 
@@ -552,6 +625,10 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         return losses
 
     def forward_test(self, img_metas, img=None, map_graph=None, **kwargs):
+
+        torch.cuda.synchronize()
+        start_time_forward_test = time.time()
+
         for var, name in [(img_metas, 'img_metas')]:
             if not isinstance(var, list):
                 raise TypeError('{} must be a list, but got {}'.format(
@@ -578,12 +655,26 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
             img_metas[0]['can_bus'][-1] = 0
             img_metas[0]['can_bus'][:3] = 0
 
+        # Total time
+        torch.cuda.synchronize()
+        start_time = time.time()
+
         new_prev_bev, results_list = self.simple_test(
             img_metas, img, map_graph, prev_bev=self.prev_frame_info['prev_bev'], **kwargs)
+
+        torch.cuda.synchronize()
+        end_time = time.time()
+        counts.time_simple_test += end_time - start_time
+
         # During inference, we save the BEV features and ego motion of each timestamp.
         self.prev_frame_info['prev_pos'] = tmp_pos
         self.prev_frame_info['prev_angle'] = tmp_angle
         self.prev_frame_info['prev_bev'] = new_prev_bev
+
+        torch.cuda.synchronize()
+        end_time_forward_test = time.time()
+        counts.time_forward_test += end_time_forward_test - start_time_forward_test
+
         return results_list
 
     def simple_test_pts(self, x, map_x, img_metas, img=None, prev_bev=None,

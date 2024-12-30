@@ -17,6 +17,10 @@ import time
 import warnings
 
 import torch
+
+from projects.toponet.models.detectors import counts
+
+
 import mmcv
 from mmcv import Config, DictAction
 from mmcv.cnn import fuse_conv_bn
@@ -232,6 +236,16 @@ def main():
         num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
         print("num_params built:", num_params)
 
+        print()
+        print()
+        for name, value in vars(counts).items():
+            print(f"{name}: {value}")
+        print()
+        print()
+
+        torch.cuda.synchronize()
+        start_time_total = time.time()
+
         if not distributed:
             if "gpu_ids" in cfg:
                 model = MMDataParallel(model, device_ids=cfg.gpu_ids)
@@ -249,6 +263,17 @@ def main():
             outputs = multi_gpu_test(model, data_loader, 
                                      tmpdir=os.path.join(args.out_dir, '.dist_test'), 
                                      gpu_collect=args.gpu_collect)
+
+        torch.cuda.synchronize()
+        end_time_total = time.time()
+        counts.total_time_gpu_test += end_time_total - start_time_total
+
+        print()
+        print()
+        for name, value in vars(counts).items():
+            print(f"{name}: {value}")
+        print()
+        print()
 
     rank, _ = get_dist_info()
     if rank == 0:
