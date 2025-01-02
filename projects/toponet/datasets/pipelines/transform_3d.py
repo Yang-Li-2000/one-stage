@@ -471,3 +471,48 @@ class CropFrontViewImageForAv2(object):
         self._crop_cam_intrinsic(results)
         self._crop_bbox(results)
         return results
+
+@PIPELINES.register_module()
+class CustomPointsRangeFilter:
+    """Filter points by the range.
+    Args:
+        point_cloud_range (list[float]): Point cloud range.
+    """
+
+    def __init__(self, point_cloud_range):
+        self.pcd_range = np.array(point_cloud_range, dtype=np.float32)
+
+    def __call__(self, data):
+        """Call function to filter points by the range.
+        Args:
+            data (dict): Result dict from loading pipeline.
+        Returns:
+            dict: Results after filtering, 'points', 'pts_instance_mask' \
+                and 'pts_semantic_mask' keys are updated in the result dict.
+        """
+        points = data["points"]
+        points_mask = points.in_range_3d(self.pcd_range)
+        clean_points = points[points_mask]
+
+        ########################################################################
+        if False:
+            print()
+            print()
+            print(clean_points.tensor[:, 0].min(), clean_points.tensor[:, 0].max(), clean_points.tensor[:, 0].mean())
+            print(clean_points.tensor[:, 1].min(), clean_points.tensor[:, 1].max(), clean_points.tensor[:, 1].mean())
+            print(clean_points.tensor[:, 2].min(), clean_points.tensor[:, 2].max(), clean_points.tensor[:, 2].mean())
+            save_path = 'debug_points/' + 'clean_points.ply'
+            with open(save_path, 'w') as file:
+                file.write("ply\n")
+                file.write("format ascii 1.0\n")
+                file.write(f"element vertex {clean_points.shape[0]}\n")
+                file.write("property float x\n")
+                file.write("property float y\n")
+                file.write("property float z\n")
+                file.write("end_header\n")
+                for point in clean_points.tensor:
+                    file.write(f"{point[0]} {point[1]} {point[2]}\n")
+        ########################################################################
+
+        data["points"] = clean_points
+        return data

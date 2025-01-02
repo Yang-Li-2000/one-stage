@@ -26,6 +26,9 @@ from openlanev2.centerline.visualization import draw_annotation_pv, assign_attri
 from ..core.lane.util import fix_pts_interpolate
 from ..core.visualizer.lane import show_bev_results
 
+from pathlib import Path
+from av2.datasets.sensor.av2_sensor_dataloader import AV2SensorDataLoader
+
 
 # Copied OpenLaneV2_subset_A_Dataset class from original TopoNet
 @DATASETS.register_module()
@@ -536,6 +539,16 @@ class OpenLaneV2_subset_A_Dataset(Custom3DDataset):
         self.split = split
         self.queue_length = queue_length
         self.filter_empty_te = filter_empty_te
+
+        split = ann_file[ann_file.find('data_dict_subset_A_') + len('data_dict_subset_A_'):ann_file.rfind('.pkl')]
+        av2_data_root = data_root[:data_root.find('OpenLane-V2')] + 'argoverse2/sensor/' + split
+        av2_data_root = Path(av2_data_root)
+        self.loader = AV2SensorDataLoader(av2_data_root, av2_data_root)
+
+        with open(data_root[:data_root.find('OpenLane-V2')] + 'open_to_av_all.pkl', 'rb') as f:
+            self.open_to_av = pickle.load(f)
+
+
         super().__init__(data_root, ann_file, **kwargs)
 
     def load_annotations(self, ann_file):
@@ -631,6 +644,12 @@ class OpenLaneV2_subset_A_Dataset(Custom3DDataset):
         can_bus[-1] = patch_angle
         input_dict['can_bus'] = can_bus
         input_dict['lidar2global_rotation'] = np.array(info['pose']['rotation'])
+
+        # Add lidar_path and timestamp
+        log_id = self.open_to_av[info['segment_id']]
+        timestamp = info['timestamp']
+        lidar_path = self.loader.get_closest_lidar_fpath(log_id, timestamp)
+        input_dict['lidar_path'] = lidar_path
 
         return input_dict
 

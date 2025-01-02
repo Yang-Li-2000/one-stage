@@ -4,6 +4,10 @@ custom_imports = dict(imports=['projects.bevformer', 'projects.toponet'])
 # If point cloud range is changed, the models should also change their point
 # cloud range accordingly
 point_cloud_range = [-51.2, -25.6, -2.3, 51.2, 25.6, 1.7]
+lidar_point_cloud_range = point_cloud_range # 1024, 512, 20
+# lidar_point_cloud_range = [-30.0, -15.0, -5.0, 30.0, 15.0, 3.0]
+
+voxel_size = [0.1, 0.1, 0.2] # TODO: check if need to modify
 
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
@@ -11,7 +15,7 @@ img_norm_cfg = dict(
 class_names = ['centerline']
 
 input_modality = dict(
-    use_lidar=False,
+    use_lidar=True,
     use_camera=True,
     use_radar=False,
     use_map=False,
@@ -46,6 +50,25 @@ bev_w_ = 200
 
 model = dict(
     type='MergedTopoNetMapGraphLidar',
+    use_grid_mask=True,
+    video_test_mode=False,
+    modality='fusion',
+    lidar_encoder=dict(
+        voxelize=dict(max_num_points=10,point_cloud_range=lidar_point_cloud_range,voxel_size=voxel_size,max_voxels=[90000, 120000]),
+        backbone=dict(
+            type='CustomSparseEncoder',
+            in_channels=3,
+            sparse_shape=[20, 512, 1024],
+            output_channels=128,
+            order=('conv', 'norm', 'act'),
+            encoder_channels=((16, 16, 32), (32, 32, 64), (64, 64, 128), (128, 128)),
+            encoder_paddings=([1, 1, 1],
+                              [1, 1, 1],
+                              [1, 1, 1],
+                              [1, 1]),
+            block_type='basicblock'
+        ),
+    ),
     img_backbone=dict(
         type='ResNet',
         depth=50,
@@ -93,6 +116,11 @@ model = dict(
         bev_h=bev_h_,
         bev_w=bev_w_,
         rotate_center=[bev_h_//2, bev_w_//2],
+        fuser=dict(
+            type='ConvFuser',
+            in_channels=[_dim_, 256],
+            out_channels=_dim_,
+        ),
         encoder=dict(
             type='BEVFormerEncoder',
             num_layers=3,
@@ -271,8 +299,17 @@ model = dict(
                 reg_cost=dict(type='LaneL1Cost', weight=0.025),
                 pc_range=point_cloud_range))))
 
+reduce_beams=32
+# load_dim=5
+# use_dim=5
+load_dim=3
+use_dim=3
+
 train_pipeline = [
     dict(type='CustomLoadMultiViewImageFromFilesToponet', to_float32=True),
+    dict(type='CustomLoadPointsFromFile', coord_type='LIDAR', load_dim=load_dim, use_dim=use_dim, reduce_beams=reduce_beams),
+    dict(type='CustomLoadPointsFromMultiSweeps', sweeps_num=1, load_dim=load_dim, use_dim=use_dim, reduce_beams=reduce_beams, pad_empty_sweeps=True, remove_close=True),
+    dict(type='CustomPointsRangeFilter', point_cloud_range=lidar_point_cloud_range),
     dict(type='LoadAnnotations3DLane',
          with_lane_3d=True, with_lane_label_3d=True, with_lane_adj=True,
          with_bbox=True, with_label=True, with_lane_lcte_adj=True),
@@ -288,18 +325,21 @@ train_pipeline = [
     dict(type='CustomCollect3D', keys=[
         'img',  'map_graph', 'onehot_category',
         'gt_lanes_3d', 'gt_lane_labels_3d', 'gt_lane_adj',
-        'gt_bboxes', 'gt_labels', 'gt_lane_lcte_adj'])
+        'gt_bboxes', 'gt_labels', 'gt_lane_lcte_adj', 'points'])
 ]
 
 test_pipeline = [
     dict(type='CustomLoadMultiViewImageFromFilesToponet', to_float32=True),
+    dict(type='CustomLoadPointsFromFile', coord_type='LIDAR', load_dim=load_dim, use_dim=use_dim, reduce_beams=reduce_beams),
+    dict(type='CustomLoadPointsFromMultiSweeps', sweeps_num=1, load_dim=load_dim, use_dim=use_dim, reduce_beams=reduce_beams, pad_empty_sweeps=True, remove_close=True),
+    dict(type='CustomPointsRangeFilter', point_cloud_range=lidar_point_cloud_range),
     dict(type='CropFrontViewImageForAv2'),
     dict(type='RandomScaleImageMultiViewImage', scales=[0.5]),
     dict(type='NormalizeMultiviewImage', **img_norm_cfg),
     dict(type='PadMultiViewImageSame2Max', size_divisor=32),
     dict(type='CustomParametrizeSDMapGraph', method='even_points_onehot_type', method_para=sd_method_para),
     dict(type='CustomFormatBundle3DLane', class_names=class_names),
-    dict(type='CustomCollect3D', keys=['img', 'map_graph', 'onehot_category',])
+    dict(type='CustomCollect3D', keys=['img', 'map_graph', 'onehot_category', 'points'])
 ]
 
 data = dict(
