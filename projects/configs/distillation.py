@@ -44,8 +44,202 @@ _num_heads_ = 4
 bev_h_ = 100
 bev_w_ = 200
 
+teacher_checkpoint_file = 'work_dirs/1122_one_stage_smerf/epoch_24.pth'
+find_unused_parameters = True
+
 model = dict(
-    type='MergedTopoNetMapGraph',
+    type='MergedDistillTopoNetMapGraph',
+    use_distill=True,
+    teacher_checkpoint=teacher_checkpoint_file,
+    loss_simple_bev=dict(type='L2Loss', loss_weight=1.0),
+    student_img_backbone=dict(
+        type='ResNet',
+        depth=50,
+        num_stages=4,
+        out_indices=(1, 2, 3),
+        frozen_stages=-1,
+        norm_cfg=dict(type='BN', requires_grad=False),
+        norm_eval=True,
+        style='pytorch',
+        init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet50')),
+    student_img_neck=dict(
+        type='FPN',
+        in_channels=[512, 1024, 2048],
+        out_channels=_dim_,
+        start_level=0,
+        add_extra_convs='on_output',
+        num_outs=_num_levels_,
+        relu_before_extra_convs=True),
+    student_bev_constructor=dict(
+        type='BEVFormerConstructer',
+        num_feature_levels=_num_levels_,
+        num_cams=num_cams,
+        embed_dims=_dim_,
+        rotate_prev_bev=True,
+        use_shift=True,
+        use_can_bus=True,
+        pc_range=point_cloud_range,
+        bev_h=bev_h_,
+        bev_w=bev_w_,
+        rotate_center=[bev_h_//2, bev_w_//2],
+        encoder=dict(
+            type='BEVFormerEncoder',
+            num_layers=3,
+            pc_range=point_cloud_range,
+            num_points_in_pillar=4,
+            return_intermediate=False,
+            transformerlayers=dict(
+                type='BEVFormerLayer',
+                attn_cfgs=[
+                    dict(
+                        type='TemporalSelfAttention',
+                        embed_dims=_dim_,
+                        num_levels=1),
+                    dict(
+                        type='SpatialCrossAttention',
+                        embed_dims=_dim_,
+                        num_cams=num_cams,
+                        pc_range=point_cloud_range,
+                        deformable_attention=dict(
+                            type='MSDeformableAttention3D',
+                            embed_dims=_dim_,
+                            num_points=8,
+                            num_levels=_num_levels_)
+                    )
+                ],
+                ffn_cfgs=_ffn_cfg_,
+                operation_order=('self_attn', 'norm', 'cross_attn', 'norm',
+                                 'ffn', 'norm'))),
+        positional_encoding=dict(
+            type='LearnedPositionalEncoding',
+            num_feats=_pos_dim_,
+            row_num_embed=bev_h_,
+            col_num_embed=bev_w_),
+    ),
+    student_bbox_head=dict(
+        type='CustomDeformableDETRHead',
+        num_query=100,
+        num_classes=13,
+        in_channels=_dim_,
+        sync_cls_avg_factor=True,
+        with_box_refine=True,
+        as_two_stage=False,
+        transformer=dict(
+            type='MyDeformableDetrTransformer',
+            encoder=dict(
+                type='DetrTransformerEncoder',
+                num_layers=6,
+                transformerlayers=dict(
+                    type='BaseTransformerLayer',
+                    attn_cfgs=dict(
+                        type='MultiScaleDeformableAttention', embed_dims=_dim_),
+                    ffn_cfgs=_ffn_cfg_,
+                    operation_order=('self_attn', 'norm', 'ffn', 'norm'))),
+            decoder=dict(
+                type='MyDeformableDetrTransformerDecoder',
+                num_layers=6,
+                return_intermediate=True,
+                transformerlayers=dict(
+                    type='MyDetrTransformerDecoderLayer',
+                    attn_cfgs=[
+                        dict(
+                            type='MyMultiheadAttention',
+                            embed_dims=_dim_,
+                            num_heads=8,
+                            dropout=0.1),
+                        dict(
+                            type='MultiScaleDeformableAttention',
+                            embed_dims=_dim_)
+                    ],
+                    feedforward_channels=_ffn_dim_,
+                    ffn_dropout=0.1,
+                    operation_order=('self_attn', 'norm', 'cross_attn', 'norm',
+                                     'ffn', 'norm')))),
+        positional_encoding=dict(
+            type='SinePositionalEncoding',
+            num_feats=_pos_dim_,
+            normalize=True,
+            offset=-0.5),
+        loss_cls=dict(
+            type='FocalLoss',
+            use_sigmoid=True,
+            gamma=2.0,
+            alpha=0.25,
+            loss_weight=1.0),
+        loss_bbox=dict(type='L1Loss', loss_weight=2.5),
+        loss_iou=dict(type='GIoULoss', loss_weight=1.0),
+        test_cfg=dict(max_per_img=100)),
+    student_lane_head=dict(
+        type='TopoNetHead',
+        num_classes=1,
+        in_channels=_dim_,
+        num_query=200,
+        bev_h=bev_h_,
+        bev_w=bev_w_,
+        pc_range=point_cloud_range,
+        pts_dim=pts_dim,
+        sync_cls_avg_factor=False,
+        code_size=code_size,
+        code_weights= [1.0 for i in range(code_size)],
+        transformer=dict(
+            type='MyTopoNetTransformerDecoderOnly',
+            embed_dims=_dim_,
+            pts_dim=pts_dim,
+            decoder=dict(
+                type='MyTopoNetSGNNDecoder',
+                num_layers=6,
+                return_intermediate=True,
+                transformerlayers=dict(
+                    type='MySGNNDecoderLayer',
+                    attn_cfgs=[
+                        dict(
+                            type='MyMultiheadAttention',
+                            embed_dims=_dim_,
+                            num_heads=8,
+                            dropout=0.1),
+                         dict(
+                            type='CustomMSDeformableAttention',
+                            embed_dims=_dim_,
+                            num_levels=1),
+                    ],
+                    ffn_cfgs=dict(
+                        type='MyDummy_FFN_SGNN',
+                        embed_dims=_dim_,
+                        feedforward_channels=_ffn_dim_,
+                        num_te_classes=13,
+                        edge_weight=0.6),
+                    operation_order=('self_attn', 'norm', 'cross_attn', 'norm',
+                                     'ffn', 'norm')))),
+        lclc_head=dict(
+            type='SingleLayerRelationshipHead',
+            in_channels_o1=_dim_,
+            in_channels_o2=_dim_,
+            shared_param=False,
+            loss_rel=dict(
+                type='FocalLoss',
+                use_sigmoid=True,
+                gamma=2.0,
+                alpha=0.25,
+                loss_weight=5)),
+        lcte_head=dict(
+            type='SingleLayerRelationshipHead',
+            in_channels_o1=_dim_,
+            in_channels_o2=_dim_,
+            shared_param=False,
+            loss_rel=dict(
+                type='FocalLoss',
+                use_sigmoid=True,
+                gamma=2.0,
+                alpha=0.25,
+                loss_weight=5)),
+        bbox_coder=dict(type='LanePseudoCoder'),
+        loss_cls=dict(
+            type='FocalLoss',
+            use_sigmoid=True,
+            gamma=2.0,
+            alpha=0.25,
+            loss_weight=1.5),
+        loss_bbox=dict(type='L1Loss', loss_weight=0.025)),
     img_backbone=dict(
         type='ResNet',
         depth=50,

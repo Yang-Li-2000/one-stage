@@ -4,3 +4,4 @@ from .merged_toponet_map_graph import MergedTopoNetMapGraph
 from .merged_toponet_lidar import MergedTopoNetMapGraphLidar
 from .model import *
 from .util import *
+from .merged_distill_toponet_map_graph import MergedDistillTopoNetMapGraph
