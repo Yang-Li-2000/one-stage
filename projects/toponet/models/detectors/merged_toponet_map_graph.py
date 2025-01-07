@@ -476,7 +476,6 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         sequence_output_clcl = query_cl.permute(1, 0,2)
         subject_output_clcl = self.final_sub_proj_clcl(sequence_output_clcl).unsqueeze(2).expand(-1, -1, self.nq_cl, -1)
         object_output_clcl = self.final_obj_proj_clcl(sequence_output_clcl).unsqueeze(1).expand(-1, self.nq_cl, -1, -1)
-        del sequence_output_clcl
         relation_source_clcl = torch.cat(
             [
                 relation_source[:, -self.nq_cl:, -self.nq_cl:],
@@ -503,6 +502,7 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         # end_time_egtr_final_proj = time.time()
         # counts.time_egtr_final_proj += end_time_egtr_final_proj - start_time_egtr_final_proj
 
+        del sequence_output_clcl
         del sequence_output_tecl
         del subject_output_clcl, object_output_clcl
         del subject_output_tecl, object_output_tecl
