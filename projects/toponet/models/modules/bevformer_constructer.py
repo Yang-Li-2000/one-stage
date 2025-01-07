@@ -151,7 +151,7 @@ class BEVFormerConstructer(BaseModule):
         obtain bev features.
         """
 
-        if True:
+        if False:
 
             # return nn.functional.interpolate(lidar_feat, size=(self.bev_h,self.bev_w), mode='bicubic', align_corners=False).flatten(2).permute(0,2,1).contiguous()
             # Flip x
