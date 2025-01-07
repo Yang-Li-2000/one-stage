@@ -345,8 +345,6 @@ class BEVFormerConstructer(BaseModule):
 
             fused_bev = fused_bev.flatten(2).permute(0,2,1).contiguous()
             bev_embed = fused_bev
-        elif self.fuser is not None:
-            raise NotImplementedError()
 
         return bev_embed
 
