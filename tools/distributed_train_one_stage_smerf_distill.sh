@@ -3,7 +3,7 @@ set -x
 
 timestamp=`date +"%y%m%d.%H%M%S"`
 
-WORK_DIR=work_dirs/0106_one_stage_smerf_distill
+WORK_DIR=work_dirs/0115_one_stage_smerf_distill_4_card_teacher
 CONFIG=projects/configs/distillation.py
 
 GPUS=$1
