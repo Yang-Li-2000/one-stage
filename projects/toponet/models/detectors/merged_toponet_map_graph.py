@@ -146,6 +146,8 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
             num_layers=3,
         )
 
+        # self.conv_layer = nn.Conv2d(in_channels=512, out_channels=512, kernel_size=3, stride=1, padding=1) # 有干扰对照
+
     def extract_img_feat(self, img, img_metas, len_queue=None):
         """Extract features of images."""
         B = img.size(0)
@@ -511,7 +513,8 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         # start_time_egtr_gated_sum = time.time()
 
         # Gated sum
-        relation_source_tecl = relation_source_tecl[:, self.nq_te:, :self.nq_te]
+        relation_source_tecl = relation_source_tecl[:, self.nq_te:, :self.nq_te]    # 有干扰对照: comment out this line
+        # relation_source_tecl = relation_source_tecl[:, :, :]      # 有干扰对照
         rel_gate_tecl = self.rel_predictor_gate_tecl(relation_source_tecl).sigmoid_()
         gated_relation_source_tecl = (rel_gate_tecl * relation_source_tecl).sum(dim=-2)
 
@@ -525,6 +528,14 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
 
         # torch.cuda.synchronize()
         # start_time_egtr_connectivity = time.time()
+
+        # # Project gated_relation_source_tecl from 300*300 to 200*200
+        # gated_relation_source_tecl = gated_relation_source_tecl.permute(0, 3, 1, 2)   # 有干扰对照
+        # conv_output = self.conv_layer(gated_relation_source_tecl)                     # 有干扰对照
+        # adaptive_pooling = nn.AdaptiveAvgPool2d((200, 200))                           # 有干扰对照
+        # resized_tensor = adaptive_pooling(conv_output)                                # 有干扰对照
+        # resized_tensor = resized_tensor.permute(0, 2, 3, 1)                           # 有干扰对照
+        # gated_relation_source_tecl = resized_tensor                                   # 有干扰对照
 
         # Connectivity
         pred_connectivity_tecl = self.connectivity_layer_tecl(gated_relation_source_tecl)
