@@ -86,30 +86,31 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         self.nq_te = self.bbox_head.num_query
         self.nq_cl = self.pts_bbox_head.num_query
 
+        EGTR_PROJ_OUT_DIM = int(embed_dims / 2)
         # projection layers
         self.proj_q_te = nn.ModuleList(
             [
-                nn.Linear(embed_dims, embed_dims)
+                nn.Linear(embed_dims, EGTR_PROJ_OUT_DIM)
                 for i in range(num_decoder_layers)
             ]
         )
 
         self.proj_k_te = nn.ModuleList(
             [
-                nn.Linear(embed_dims, embed_dims)
+                nn.Linear(embed_dims, EGTR_PROJ_OUT_DIM)
                 for i in range(num_decoder_layers)
             ]
         )
         self.proj_q_cl = nn.ModuleList(
             [
-                nn.Linear(embed_dims, embed_dims)
+                nn.Linear(embed_dims, EGTR_PROJ_OUT_DIM)
                 for i in range(num_decoder_layers)
             ]
         )
 
         self.proj_k_cl = nn.ModuleList(
             [
-                nn.Linear(embed_dims, embed_dims)
+                nn.Linear(embed_dims, EGTR_PROJ_OUT_DIM)
                 for i in range(num_decoder_layers)
             ]
         )
@@ -118,15 +119,15 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         # self.final_sub_proj = nn.Linear(embed_dims, embed_dims)
         # self.final_obj_proj = nn.Linear(embed_dims, embed_dims)
         # clcl
-        self.final_sub_proj_clcl = nn.Linear(embed_dims, embed_dims)
-        self.final_obj_proj_clcl = nn.Linear(embed_dims, embed_dims)
+        self.final_sub_proj_clcl = nn.Linear(embed_dims, EGTR_PROJ_OUT_DIM)
+        self.final_obj_proj_clcl = nn.Linear(embed_dims, EGTR_PROJ_OUT_DIM)
         # tecl
-        self.final_sub_proj_tecl = nn.Linear(embed_dims, embed_dims)
-        self.final_obj_proj_tecl = nn.Linear(embed_dims, embed_dims)
+        self.final_sub_proj_tecl = nn.Linear(embed_dims, EGTR_PROJ_OUT_DIM)
+        self.final_obj_proj_tecl = nn.Linear(embed_dims, EGTR_PROJ_OUT_DIM)
 
         # relation predictor gate
-        self.rel_predictor_gate_tecl = nn.Linear(2 * embed_dims, 1)
-        self.rel_predictor_gate_clcl = nn.Linear(2 * embed_dims, 1)
+        self.rel_predictor_gate_tecl = nn.Linear(embed_dims, 1)
+        self.rel_predictor_gate_clcl = nn.Linear(embed_dims, 1)
 
         # bias initialization: initialize to ones
         # nn.init.constant_(self.rel_predictor_gate_tecl.bias, 1.0)
@@ -134,19 +135,27 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
 
         # connectivity layers
         self.connectivity_layer_tecl = DeformableDetrMLPPredictionHead(
-            input_dim=2*embed_dims,
+            input_dim=embed_dims,
             hidden_dim=embed_dims,
             output_dim=1,
             num_layers=3,
         )
         self.connectivity_layer_clcl = DeformableDetrMLPPredictionHead(
-            input_dim=2 * embed_dims,
+            input_dim=embed_dims,
             hidden_dim=embed_dims,
             output_dim=1,
             num_layers=3,
         )
 
         # self.conv_layer = nn.Conv2d(in_channels=512, out_channels=512, kernel_size=3, stride=1, padding=1) # 有干扰对照
+
+        # positional embedding MLP for CL
+        # self.pos_embed = DeformableDetrMLPPredictionHead(
+        #     input_dim=9,
+        #     hidden_dim=embed_dims,
+        #     output_dim=128,
+        #     num_layers=3,
+        # )
 
     def extract_img_feat(self, img, img_metas, len_queue=None):
         """Extract features of images."""
@@ -404,7 +413,7 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         # torch.cuda.synchronize()
         # start_time_egtr_proj = time.time()
         # For TE
-        QK_te_shape = [6, 100, 1, 256]
+        QK_te_shape = [6, 100, 1, 128]
         projected_q_te = torch.empty(QK_te_shape).to(device)  # Allocate once
         for i, (q, proj_q) in enumerate(zip(decoder_attention_queries_te, self.proj_q_te)):
             projected_q_te[i] = proj_q(q * unscaling)
@@ -418,7 +427,7 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         del projected_k_te
 
         # For CL
-        QK_cl_shape = [6, 200, 1, 256]
+        QK_cl_shape = [6, 200, 1, 128]
         projected_q_cl = torch.empty(QK_cl_shape).to(device)
         for i, (q, proj_q) in enumerate(zip(decoder_attention_queries_cl, self.proj_q_cl)):
             projected_q_cl[i] = proj_q(q * unscaling)
@@ -536,6 +545,10 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         # resized_tensor = adaptive_pooling(conv_output)                                # 有干扰对照
         # resized_tensor = resized_tensor.permute(0, 2, 3, 1)                           # 有干扰对照
         # gated_relation_source_tecl = resized_tensor                                   # 有干扰对照
+
+        # Add positional embeddings to CL
+        # lidar2img = torch.tensor(img_metas[0]['lidar2img'][0][:3, :3].flatten()).to(torch.float32).to(gated_relation_source_tecl.device)
+        # lane_pos_embed = self.pos_embed(lidar2img)
 
         # Connectivity
         pred_connectivity_tecl = self.connectivity_layer_tecl(gated_relation_source_tecl)
