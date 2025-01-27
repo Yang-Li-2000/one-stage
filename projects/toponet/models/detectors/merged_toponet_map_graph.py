@@ -134,15 +134,16 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         # nn.init.constant_(self.rel_predictor_gate_clcl.bias, 1.0)
 
         # connectivity layers
+        EGTR_CONNECTIVITY_HIDDEN_DIM = int(embed_dims / 2)
         self.connectivity_layer_tecl = DeformableDetrMLPPredictionHead(
             input_dim=embed_dims,
-            hidden_dim=embed_dims,
+            hidden_dim=EGTR_CONNECTIVITY_HIDDEN_DIM,
             output_dim=1,
             num_layers=3,
         )
         self.connectivity_layer_clcl = DeformableDetrMLPPredictionHead(
             input_dim=embed_dims,
-            hidden_dim=embed_dims,
+            hidden_dim=EGTR_CONNECTIVITY_HIDDEN_DIM,
             output_dim=1,
             num_layers=3,
         )
