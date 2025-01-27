@@ -87,29 +87,31 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         self.nq_cl = self.pts_bbox_head.num_query
 
         # projection layers
+        EGTR_PROJ_OUT_DIM = int(embed_dims / 2)
+        # projection layers
         self.proj_q_te = nn.ModuleList(
             [
-                nn.Linear(embed_dims, embed_dims)
+                nn.Linear(embed_dims, EGTR_PROJ_OUT_DIM)
                 for i in range(num_decoder_layers)
             ]
         )
 
         self.proj_k_te = nn.ModuleList(
             [
-                nn.Linear(embed_dims, embed_dims)
+                nn.Linear(embed_dims, EGTR_PROJ_OUT_DIM)
                 for i in range(num_decoder_layers)
             ]
         )
         self.proj_q_cl = nn.ModuleList(
             [
-                nn.Linear(embed_dims, embed_dims)
+                nn.Linear(embed_dims, EGTR_PROJ_OUT_DIM)
                 for i in range(num_decoder_layers)
             ]
         )
 
         self.proj_k_cl = nn.ModuleList(
             [
-                nn.Linear(embed_dims, embed_dims)
+                nn.Linear(embed_dims, EGTR_PROJ_OUT_DIM)
                 for i in range(num_decoder_layers)
             ]
         )
@@ -118,30 +120,32 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         # self.final_sub_proj = nn.Linear(embed_dims, embed_dims)
         # self.final_obj_proj = nn.Linear(embed_dims, embed_dims)
         # clcl
-        self.final_sub_proj_clcl = nn.Linear(embed_dims, embed_dims)
-        self.final_obj_proj_clcl = nn.Linear(embed_dims, embed_dims)
+        self.final_sub_proj_clcl = nn.Linear(embed_dims, EGTR_PROJ_OUT_DIM)
+        self.final_obj_proj_clcl = nn.Linear(embed_dims, EGTR_PROJ_OUT_DIM)
         # tecl
-        self.final_sub_proj_tecl = nn.Linear(embed_dims, embed_dims)
-        self.final_obj_proj_tecl = nn.Linear(embed_dims, embed_dims)
+        self.final_sub_proj_tecl = nn.Linear(embed_dims, EGTR_PROJ_OUT_DIM)
+        self.final_obj_proj_tecl = nn.Linear(embed_dims, EGTR_PROJ_OUT_DIM)
 
         # relation predictor gate
-        self.rel_predictor_gate_tecl = nn.Linear(2 * embed_dims, 1)
-        self.rel_predictor_gate_clcl = nn.Linear(2 * embed_dims, 1)
+        self.rel_predictor_gate_tecl = nn.Linear(embed_dims, 1)
+        self.rel_predictor_gate_clcl = nn.Linear(embed_dims, 1)
 
         # bias initialization: initialize to ones
         # nn.init.constant_(self.rel_predictor_gate_tecl.bias, 1.0)
         # nn.init.constant_(self.rel_predictor_gate_clcl.bias, 1.0)
 
         # connectivity layers
+        # EGTR_CONNECTIVITY_HIDDEN_DIM = int(embed_dims / 2)
+        EGTR_CONNECTIVITY_HIDDEN_DIM = embed_dims
         self.connectivity_layer_tecl = DeformableDetrMLPPredictionHead(
-            input_dim=2*embed_dims,
-            hidden_dim=embed_dims,
+            input_dim=embed_dims,
+            hidden_dim=EGTR_CONNECTIVITY_HIDDEN_DIM,
             output_dim=1,
             num_layers=3,
         )
         self.connectivity_layer_clcl = DeformableDetrMLPPredictionHead(
-            input_dim=2 * embed_dims,
-            hidden_dim=embed_dims,
+            input_dim=embed_dims,
+            hidden_dim=EGTR_CONNECTIVITY_HIDDEN_DIM,
             output_dim=1,
             num_layers=3,
         )
