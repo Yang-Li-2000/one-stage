@@ -405,7 +405,7 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         # torch.cuda.synchronize()
         # start_time_egtr_proj = time.time()
         # For TE
-        QK_te_shape = [6, 100, 1, 256]
+        QK_te_shape = [6, 100, 1, 128]
         projected_q_te = torch.empty(QK_te_shape).to(device)  # Allocate once
         for i, (q, proj_q) in enumerate(zip(decoder_attention_queries_te, self.proj_q_te)):
             projected_q_te[i] = proj_q(q * unscaling)
@@ -419,7 +419,7 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         del projected_k_te
 
         # For CL
-        QK_cl_shape = [6, 200, 1, 256]
+        QK_cl_shape = [6, 200, 1, 128]
         projected_q_cl = torch.empty(QK_cl_shape).to(device)
         for i, (q, proj_q) in enumerate(zip(decoder_attention_queries_cl, self.proj_q_cl)):
             projected_q_cl[i] = proj_q(q * unscaling)

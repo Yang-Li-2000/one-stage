@@ -44,7 +44,7 @@ _num_heads_ = 4
 bev_h_ = 100
 bev_w_ = 200
 
-teacher_checkpoint_file = 'work_dirs/0122_one_stage_smerf_half_dim/epoch_24.pth'
+teacher_checkpoint_file = 'work_dirs/0126_one_stage_smerf_half_dim_and_half_connectivity_hidden_dim/epoch_24.pth'
 find_unused_parameters = True
 
 model = dict(
