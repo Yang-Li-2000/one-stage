@@ -10,6 +10,8 @@ import numpy as np
 import torch
 from torch import nn
 
+from . import counts
+
 from mmcv.runner import force_fp32, auto_fp16
 from mmdet.models import DETECTORS
 from mmdet.models.builder import build_head
@@ -78,30 +80,31 @@ class MergedTopoNet(MVXTwoStageDetector):
         self.nq_te = self.bbox_head.num_query
         self.nq_cl = self.pts_bbox_head.num_query
 
+        EGTR_PROJ_OUT_DIM = int(embed_dims / 2)
         # projection layers
         self.proj_q_te = nn.ModuleList(
             [
-                nn.Linear(embed_dims, embed_dims)
+                nn.Linear(embed_dims, EGTR_PROJ_OUT_DIM)
                 for i in range(num_decoder_layers)
             ]
         )
 
         self.proj_k_te = nn.ModuleList(
             [
-                nn.Linear(embed_dims, embed_dims)
+                nn.Linear(embed_dims, EGTR_PROJ_OUT_DIM)
                 for i in range(num_decoder_layers)
             ]
         )
         self.proj_q_cl = nn.ModuleList(
             [
-                nn.Linear(embed_dims, embed_dims)
+                nn.Linear(embed_dims, EGTR_PROJ_OUT_DIM)
                 for i in range(num_decoder_layers)
             ]
         )
 
         self.proj_k_cl = nn.ModuleList(
             [
-                nn.Linear(embed_dims, embed_dims)
+                nn.Linear(embed_dims, EGTR_PROJ_OUT_DIM)
                 for i in range(num_decoder_layers)
             ]
         )
@@ -110,26 +113,27 @@ class MergedTopoNet(MVXTwoStageDetector):
         # self.final_sub_proj = nn.Linear(embed_dims, embed_dims)
         # self.final_obj_proj = nn.Linear(embed_dims, embed_dims)
         # clcl
-        self.final_sub_proj_clcl = nn.Linear(embed_dims, embed_dims)
-        self.final_obj_proj_clcl = nn.Linear(embed_dims, embed_dims)
+        self.final_sub_proj_clcl = nn.Linear(embed_dims, EGTR_PROJ_OUT_DIM)
+        self.final_obj_proj_clcl = nn.Linear(embed_dims, EGTR_PROJ_OUT_DIM)
         # tecl
-        self.final_sub_proj_tecl = nn.Linear(embed_dims, embed_dims)
-        self.final_obj_proj_tecl = nn.Linear(embed_dims, embed_dims)
+        self.final_sub_proj_tecl = nn.Linear(embed_dims, EGTR_PROJ_OUT_DIM)
+        self.final_obj_proj_tecl = nn.Linear(embed_dims, EGTR_PROJ_OUT_DIM)
 
         # relation predictor gate
-        self.rel_predictor_gate_tecl = nn.Linear(2 * embed_dims, 1)
-        self.rel_predictor_gate_clcl = nn.Linear(2 * embed_dims, 1)
+        self.rel_predictor_gate_tecl = nn.Linear(embed_dims, 1)
+        self.rel_predictor_gate_clcl = nn.Linear(embed_dims, 1)
 
         # connectivity layers
+        EGTR_CONNECTIVITY_HIDDEN_DIM = int(embed_dims / 2)
         self.connectivity_layer_tecl = DeformableDetrMLPPredictionHead(
-            input_dim=2*embed_dims,
-            hidden_dim=embed_dims,
+            input_dim=embed_dims,
+            hidden_dim=EGTR_CONNECTIVITY_HIDDEN_DIM,
             output_dim=1,
             num_layers=3,
         )
         self.connectivity_layer_clcl = DeformableDetrMLPPredictionHead(
-            input_dim=2 * embed_dims,
-            hidden_dim=embed_dims,
+            input_dim=embed_dims,
+            hidden_dim=EGTR_CONNECTIVITY_HIDDEN_DIM,
             output_dim=1,
             num_layers=3,
         )
@@ -203,7 +207,18 @@ class MergedTopoNet(MVXTwoStageDetector):
         # 1. prepare inputs
         te_feats = None
         te_cls_scores = None
+
+        # torch.cuda.synchronize()
+        # start_time_bev = time.time()
+
         bev_feats = self.bev_constructor(img_feats, img_metas, prev_bev)
+
+        # torch.cuda.synchronize()
+        # end_time_bev = time.time()
+        # counts.time_bev += end_time_bev - start_time_bev
+
+        # torch.cuda.synchronize()
+        # start_time_decoder = time.time()
 
         # 2. go through the first half
         outputs_te_head_first_half = self.bbox_head.forward_first_half(front_view_img_feats, bbox_img_metas)
@@ -359,7 +374,7 @@ class MergedTopoNet(MVXTwoStageDetector):
         # Unscaling & stacking attention queries
         device = decoder_attention_queries_te[0].device
         # For TE
-        QK_te_shape = [6, 100, 1, 256]
+        QK_te_shape = [6, 100, 1, 128]
         projected_q_te = torch.empty(QK_te_shape).to(device)  # Allocate once
         for i, (q, proj_q) in enumerate(zip(decoder_attention_queries_te, self.proj_q_te)):
             projected_q_te[i] = proj_q(q * unscaling)
@@ -373,7 +388,7 @@ class MergedTopoNet(MVXTwoStageDetector):
         del projected_k_te
 
         # For CL
-        QK_cl_shape = [6, 200, 1, 256]
+        QK_cl_shape = [6, 200, 1, 128]
         projected_q_cl = torch.empty(QK_cl_shape).to(device)
         for i, (q, proj_q) in enumerate(zip(decoder_attention_queries_cl, self.proj_q_cl)):
             projected_q_cl[i] = proj_q(q * unscaling)
@@ -459,6 +474,10 @@ class MergedTopoNet(MVXTwoStageDetector):
         outs['all_lclc_preds'] = [pred_connectivity_clcl]
         outs['all_lcte_preds'] = [pred_connectivity_tecl]
 
+        # torch.cuda.synchronize()
+        # end_time_decoder = time.time()
+        # counts.time_decoder += end_time_decoder - start_time_decoder
+
         return bbox_outs, outs, bev_feats
 
     @auto_fp16(apply_to=('img'))
@@ -526,6 +545,10 @@ class MergedTopoNet(MVXTwoStageDetector):
         return losses
 
     def forward_test(self, img_metas, img=None, **kwargs):
+
+        # torch.cuda.synchronize()
+        # start_time_forward_test = time.time()
+
         for var, name in [(img_metas, 'img_metas')]:
             if not isinstance(var, list):
                 raise TypeError('{} must be a list, but got {}'.format(
@@ -552,12 +575,26 @@ class MergedTopoNet(MVXTwoStageDetector):
             img_metas[0]['can_bus'][-1] = 0
             img_metas[0]['can_bus'][:3] = 0
 
+        # Total time
+        # torch.cuda.synchronize()
+        # start_time = time.time()
+
         new_prev_bev, results_list = self.simple_test(
             img_metas, img, prev_bev=self.prev_frame_info['prev_bev'], **kwargs)
+
+        # torch.cuda.synchronize()
+        # end_time = time.time()
+        # counts.time_simple_test += end_time - start_time
+
         # During inference, we save the BEV features and ego motion of each timestamp.
         self.prev_frame_info['prev_pos'] = tmp_pos
         self.prev_frame_info['prev_angle'] = tmp_angle
         self.prev_frame_info['prev_bev'] = new_prev_bev
+
+        # torch.cuda.synchronize()
+        # end_time_forward_test = time.time()
+        # counts.time_forward_test += end_time_forward_test - start_time_forward_test
+
         return results_list
 
     def simple_test_pts(self, x, img_metas, img=None, prev_bev=None,

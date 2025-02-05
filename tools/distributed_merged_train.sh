@@ -3,7 +3,7 @@ set -x
 
 timestamp=`date +"%y%m%d.%H%M%S"`
 
-WORK_DIR=work_dirs/1110_map_with_other_cars
+WORK_DIR=work_dirs/0205_one_stage_half_dim_and_half_connectivity_hidden_dim
 CONFIG=projects/configs/merged_subset_A.py
 
 GPUS=$1
