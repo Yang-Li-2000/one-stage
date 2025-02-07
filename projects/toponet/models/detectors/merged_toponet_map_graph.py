@@ -87,6 +87,7 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         self.nq_cl = self.pts_bbox_head.num_query
 
         EGTR_PROJ_OUT_DIM = int(embed_dims / 2)
+        self.EGTR_PROJ_OUT_DIM = EGTR_PROJ_OUT_DIM
         # projection layers
         self.proj_q_te = nn.ModuleList(
             [
@@ -126,8 +127,8 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         self.final_obj_proj_tecl = nn.Linear(embed_dims, EGTR_PROJ_OUT_DIM)
 
         # relation predictor gate
-        self.rel_predictor_gate_tecl = nn.Linear(embed_dims, 1)
-        self.rel_predictor_gate_clcl = nn.Linear(embed_dims, 1)
+        self.rel_predictor_gate_tecl = nn.Linear(2*EGTR_PROJ_OUT_DIM, 1)
+        self.rel_predictor_gate_clcl = nn.Linear(2*EGTR_PROJ_OUT_DIM, 1)
 
         # bias initialization: initialize to ones
         # nn.init.constant_(self.rel_predictor_gate_tecl.bias, 1.0)
@@ -136,13 +137,13 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         # connectivity layers
         EGTR_CONNECTIVITY_HIDDEN_DIM = int(embed_dims / 2)
         self.connectivity_layer_tecl = DeformableDetrMLPPredictionHead(
-            input_dim=embed_dims,
+            input_dim=2*EGTR_PROJ_OUT_DIM,
             hidden_dim=EGTR_CONNECTIVITY_HIDDEN_DIM,
             output_dim=1,
             num_layers=3,
         )
         self.connectivity_layer_clcl = DeformableDetrMLPPredictionHead(
-            input_dim=embed_dims,
+            input_dim=2*EGTR_PROJ_OUT_DIM,
             hidden_dim=EGTR_CONNECTIVITY_HIDDEN_DIM,
             output_dim=1,
             num_layers=3,
@@ -414,7 +415,7 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         # torch.cuda.synchronize()
         # start_time_egtr_proj = time.time()
         # For TE
-        QK_te_shape = [6, 100, 1, 128]
+        QK_te_shape = [6, 100, 1, self.EGTR_PROJ_OUT_DIM]
         projected_q_te = torch.empty(QK_te_shape).to(device)  # Allocate once
         for i, (q, proj_q) in enumerate(zip(decoder_attention_queries_te, self.proj_q_te)):
             projected_q_te[i] = proj_q(q * unscaling)
@@ -428,7 +429,7 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
         del projected_k_te
 
         # For CL
-        QK_cl_shape = [6, 200, 1, 128]
+        QK_cl_shape = [6, 200, 1, self.EGTR_PROJ_OUT_DIM]
         projected_q_cl = torch.empty(QK_cl_shape).to(device)
         for i, (q, proj_q) in enumerate(zip(decoder_attention_queries_cl, self.proj_q_cl)):
             projected_q_cl[i] = proj_q(q * unscaling)
