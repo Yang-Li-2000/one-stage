@@ -149,7 +149,7 @@ class MergedTopoNetMapGraph(MVXTwoStageDetector):
             num_layers=3,
         )
 
-        # self.conv_layer = nn.Conv2d(in_channels=512, out_channels=512, kernel_size=3, stride=1, padding=1) # 有干扰对照
+        # self.conv_layer = nn.Conv2d(in_channels=2*EGTR_PROJ_OUT_DIM, out_channels=2*EGTR_PROJ_OUT_DIM, kernel_size=3, stride=1, padding=1) # 有干扰对照
 
         # positional embedding MLP for CL
         # self.pos_embed = DeformableDetrMLPPredictionHead(
