@@ -646,10 +646,10 @@ class OpenLaneV2_subset_A_Dataset(Custom3DDataset):
         input_dict['lidar2global_rotation'] = np.array(info['pose']['rotation'])
 
         # Add lidar_path and timestamp
-        log_id = self.open_to_av[info['segment_id']]
-        timestamp = info['timestamp']
-        lidar_path = self.loader.get_closest_lidar_fpath(log_id, timestamp)
-        input_dict['lidar_path'] = lidar_path
+        # log_id = self.open_to_av[info['segment_id']]
+        # timestamp = info['timestamp']
+        # lidar_path = self.loader.get_closest_lidar_fpath(log_id, timestamp)
+        # input_dict['lidar_path'] = lidar_path
 
         return input_dict
 

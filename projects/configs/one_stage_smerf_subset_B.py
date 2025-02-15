@@ -19,12 +19,13 @@ input_modality = dict(
 num_cams = 6
 pts_dim = 2
 
-dataset_type = 'Original_OpenLaneV2_subset_B_Dataset'
+dataset_type = 'OpenLaneV2_subset_B_GraphicalSDMapDataset'
 data_root = 'data/OpenLane-V2/'
 
 para_method = 'fix_pts_interp'
 method_para = dict(n_points=11)
 code_size = pts_dim * method_para['n_points']
+sd_method_para = dict(n_points=11)
 
 _dim_ = 256
 _pos_dim_ = _dim_//2
@@ -39,11 +40,12 @@ _ffn_cfg_ = dict(
 ),
 
 _num_levels_ = 4
+_num_heads_ = 4
 bev_h_ = 100
 bev_w_ = 200
 
 model = dict(
-    type='TopoNet',
+    type='MergedTopoNetMapGraph',
     img_backbone=dict(
         type='ResNet',
         depth=50,
@@ -62,6 +64,23 @@ model = dict(
         add_extra_convs='on_output',
         num_outs=_num_levels_,
         relu_before_extra_convs=True),
+    map_encoder=dict(
+        type='MapGraphTransformer',
+        input_dim=360,  # 32 * 11 + 8
+        dmodel=_dim_,      # TODO: maybe change?
+        hidden_dim=_dim_,  # TODO: maybe change?
+        nheads=_num_heads_,
+        nlayers=6,
+        batch_first=True,
+        pos_encoder=dict(
+            type='SineContinuousPositionalEncoding',
+            num_feats=16,  # 2 * 16 = 32 final dim
+            temperature=1000,
+            normalize=True,
+            range=[point_cloud_range[3] - point_cloud_range[0], point_cloud_range[4] - point_cloud_range[1]],
+            offset=[point_cloud_range[0], point_cloud_range[1]],
+        ),
+    ),
     bev_constructor=dict(
         type='BEVFormerConstructer',
         num_feature_levels=_num_levels_,
@@ -97,10 +116,15 @@ model = dict(
                             embed_dims=_dim_,
                             num_points=8,
                             num_levels=_num_levels_)
-                    )
+                    ),
+                    dict(
+                        type='MaskedCrossAttention',
+                        embed_dims=_dim_,
+                        num_heads=_num_heads_,),
+
                 ],
                 ffn_cfgs=_ffn_cfg_,
-                operation_order=('self_attn', 'norm', 'cross_attn', 'norm',
+                operation_order=('self_attn', 'norm', 'cross_attn', 'norm', 'cross_attn_graph', 'norm',
                                  'ffn', 'norm'))),
         positional_encoding=dict(
             type='LearnedPositionalEncoding',
@@ -117,7 +141,7 @@ model = dict(
         with_box_refine=True,
         as_two_stage=False,
         transformer=dict(
-            type='DeformableDetrTransformer',
+            type='MyDeformableDetrTransformer',
             encoder=dict(
                 type='DetrTransformerEncoder',
                 num_layers=6,
@@ -128,14 +152,14 @@ model = dict(
                     ffn_cfgs=_ffn_cfg_,
                     operation_order=('self_attn', 'norm', 'ffn', 'norm'))),
             decoder=dict(
-                type='DeformableDetrTransformerDecoder',
+                type='MyDeformableDetrTransformerDecoder',
                 num_layers=6,
                 return_intermediate=True,
                 transformerlayers=dict(
-                    type='DetrTransformerDecoderLayer',
+                    type='MyDetrTransformerDecoderLayer',
                     attn_cfgs=[
                         dict(
-                            type='MultiheadAttention',
+                            type='MyMultiheadAttention',
                             embed_dims=_dim_,
                             num_heads=8,
                             dropout=0.1),
@@ -174,18 +198,18 @@ model = dict(
         code_size=code_size,
         code_weights= [1.0 for i in range(code_size)],
         transformer=dict(
-            type='TopoNetTransformerDecoderOnly',
+            type='MyTopoNetTransformerDecoderOnly',
             embed_dims=_dim_,
             pts_dim=pts_dim,
             decoder=dict(
-                type='TopoNetSGNNDecoder',
+                type='MyTopoNetSGNNDecoder',
                 num_layers=6,
                 return_intermediate=True,
                 transformerlayers=dict(
-                    type='SGNNDecoderLayer',
+                    type='MySGNNDecoderLayer',
                     attn_cfgs=[
                         dict(
-                            type='MultiheadAttention',
+                            type='MyMultiheadAttention',
                             embed_dims=_dim_,
                             num_heads=8,
                             dropout=0.1),
@@ -195,7 +219,7 @@ model = dict(
                             num_levels=1),
                     ],
                     ffn_cfgs=dict(
-                        type='FFN_SGNN',
+                        type='MyDummy_FFN_SGNN',
                         embed_dims=_dim_,
                         feedforward_channels=_ffn_dim_,
                         num_te_classes=13,
@@ -248,7 +272,7 @@ model = dict(
                 pc_range=point_cloud_range))))
 
 train_pipeline = [
-    dict(type='CustomLoadMultiViewImageFromFiles', to_float32=True),
+    dict(type='CustomLoadMultiViewImageFromFilesToponet', to_float32=True),
     dict(type='LoadAnnotations3DLane',
          with_lane_3d=True, with_lane_label_3d=True, with_lane_adj=True,
          with_bbox=True, with_label=True, with_lane_lcte_adj=True),
@@ -258,19 +282,22 @@ train_pipeline = [
     dict(type='PadMultiViewImageSame2Max', size_divisor=32),
     dict(type='GridMaskMultiViewImage'),
     dict(type='LaneParameterize3D', method=para_method, method_para=method_para),
+    dict(type='CustomParametrizeSDMapGraph', method='even_points_onehot_type', method_para=sd_method_para),
     dict(type='CustomFormatBundle3DLane', class_names=class_names),
     dict(type='CustomCollect3D', keys=[
-        'img', 'gt_lanes_3d', 'gt_lane_labels_3d', 'gt_lane_adj',
+        'img',  'map_graph', 'onehot_category',
+        'gt_lanes_3d', 'gt_lane_labels_3d', 'gt_lane_adj',
         'gt_bboxes', 'gt_labels', 'gt_lane_lcte_adj'])
 ]
 
 test_pipeline = [
-    dict(type='CustomLoadMultiViewImageFromFiles', to_float32=True),
+    dict(type='CustomLoadMultiViewImageFromFilesToponet', to_float32=True),
     dict(type='RandomScaleImageMultiViewImage', scales=[0.5]),
     dict(type='NormalizeMultiviewImage', **img_norm_cfg),
     dict(type='PadMultiViewImageSame2Max', size_divisor=32),
+    dict(type='CustomParametrizeSDMapGraph', method='even_points_onehot_type', method_para=sd_method_para),
     dict(type='CustomFormatBundle3DLane', class_names=class_names),
-    dict(type='CustomCollect3D', keys=['img'])
+    dict(type='CustomCollect3D', keys=['img', 'map_graph', 'onehot_category',])
 ]
 
 data = dict(
@@ -280,16 +307,21 @@ data = dict(
         type=dataset_type,
         data_root=data_root,
         ann_file=data_root + 'data_dict_subset_B_train.pkl',
+        # ann_file=data_root + 'data_dict_sample_train.pkl',
+        map_dir_prefix='sd_map_graph_all',
+        map_file_ext='pkl',
         pipeline=train_pipeline,
         classes=class_names,
         modality=input_modality,
         split='train',
-        filter_map_change=True,
         test_mode=False),
     val=dict(
         type=dataset_type,
         data_root=data_root,
         ann_file=data_root + 'data_dict_subset_B_val.pkl',
+        # ann_file=data_root + 'data_dict_sample_train.pkl',
+        map_dir_prefix='sd_map_graph_all',
+        map_file_ext='pkl',
         pipeline=test_pipeline,
         classes=class_names,
         modality=input_modality,
@@ -299,6 +331,9 @@ data = dict(
         type=dataset_type,
         data_root=data_root,
         ann_file=data_root + 'data_dict_subset_B_val.pkl',
+        # ann_file=data_root + 'data_dict_sample_train.pkl',
+        map_dir_prefix='sd_map_graph_all',
+        map_file_ext='pkl',
         pipeline=test_pipeline,
         classes=class_names,
         modality=input_modality,
@@ -312,6 +347,22 @@ optimizer = dict(
     paramwise_cfg=dict(
         custom_keys={
             'img_backbone': dict(lr_mult=0.1),
+
+            'proj_q_te': dict(lr_mult=1.0),
+            'proj_k_te': dict(lr_mult=1.0),
+            'proj_q_cl': dict(lr_mult=1.0),
+            'proj_k_cl': dict(lr_mult=1.0),
+
+            'final_sub_proj_clcl': dict(lr_mult=1.0),
+            'final_obj_proj_clcl': dict(lr_mult=1.0),
+            'final_sub_proj_tecl': dict(lr_mult=1.0),
+            'final_obj_proj_tecl': dict(lr_mult=1.0),
+
+            'rel_predictor_gate_tecl': dict(lr_mult=1.0),
+            'rel_predictor_gate_clcl': dict(lr_mult=1.0),
+
+            'connectivity_layer_tecl': dict(lr_mult=1.0),
+            'connectivity_layer_clcl': dict(lr_mult=1.0),
         }),
     weight_decay=0.01)
 
