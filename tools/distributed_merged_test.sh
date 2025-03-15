@@ -3,7 +3,7 @@ set -x
 
 timestamp=`date +"%y%m%d.%H%M%S"`
 
-WORK_DIR=work_dirs/merged_toponet
+WORK_DIR=work_dirs/one_stage_no_sd_maps
 CONFIG=projects/configs/merged_subset_A.py
 
 CHECKPOINT=${WORK_DIR}/epoch_24.pth

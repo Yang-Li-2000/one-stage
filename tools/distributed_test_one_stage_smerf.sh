@@ -3,7 +3,7 @@ set -x
 
 timestamp=`date +"%y%m%d.%H%M%S"`
 
-WORK_DIR=work_dirs/1121_one_stage_smerf
+WORK_DIR=work_dirs/one_stage_with_sd_maps
 CONFIG=projects/configs/one_stage_smerf_subset_A.py
 
 CHECKPOINT=${WORK_DIR}/epoch_24.pth
