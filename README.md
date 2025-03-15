@@ -31,6 +31,9 @@ Follow the [SMERF repo](https://github.com/NVlabs/SMERF/tree/main) to download a
 
 ### Environment Setup
 TODO
+```bash
+pip install -r requirements.txt
+```
 
 ## Train
 
