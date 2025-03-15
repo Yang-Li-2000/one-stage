@@ -30,10 +30,27 @@ Follow the [SMERF repo](https://github.com/NVlabs/SMERF/tree/main) to download a
 - PyTorch 1.10.1
 
 ### Environment Setup
-TODO
+We recommend using [conda](https://www.anaconda.com/download) to run the code. Alternatively, we provide a [Dockerfile](Dockerfile) for ease of installation.
+
+```bash
+conda create -n one_stage python=3.8 -y
+conda activate one_stage
+
+pip install torch==1.10.1+cu111 torchvision==0.11.2+cu111 -f https://download.pytorch.org/whl/torch_stable.html
+```
+
+Install mm-series packages.
+```bash
+pip install mmcv-full==1.5.2 -f https://download.openmmlab.com/mmcv/dist/cu111/torch1.10.0/index.html
+pip install mmdet==2.26.0
+pip install mmsegmentation==0.29.1
+```
+
+Install other required packages.
 ```bash
 pip install -r requirements.txt
 ```
+
 
 ## Train
 
