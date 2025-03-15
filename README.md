@@ -5,8 +5,8 @@
 **Ruikai Li**<sup>5</sup> · **Zhenxin Zhu**<sup>1</sup> · **Huan-ang Gao**<sup>2</sup> · **Xiaojian Lin**<sup>1</sup> · **Zhiyong Cui**<sup>2</sup> <br>
 [**Hang Zhao**](https://hangzhaomit.github.io/)<sup>3</sup> · [**Hao Zhao**](https://sites.google.com/view/fromandto/)<sup>1</sup>
 
-<sup>1</sup> Institute for AI Industry Research (AIR), Tsinghua University · <sup>2</sup> Bosch Corporate Research <br>
-<sup>3</sup> Institute for Interdisciplinary Information Sciences (IIIS), Tsinghua University <br>
-<sup>4</sup> Department of Computer Science, ETH Zürich · <sup>5</sup> State Key Lab of Intelligent Transprotation System, Beihang University <br>
+<sup>1</sup> Institute for AI Industry Research (AIR), Tsinghua University. <sup>2</sup> Bosch Corporate Research. <br>
+<sup>3</sup> Institute for Interdisciplinary Information Sciences (IIIS), Tsinghua University. <br>
+<sup>4</sup> Department of Computer Science, ETH Zürich. <sup>5</sup> State Key Lab of Intelligent Transprotation System, Beihang University. <br>
 <sub>(* indicates equal contribution)</sub>
 </div>
