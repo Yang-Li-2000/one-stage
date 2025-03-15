@@ -51,6 +51,9 @@ Install other required packages.
 pip install -r requirements.txt
 ```
 
+### Downlaod Checkpoints
+Model checkpoints can be downloaded from [here](https://www.icloud.com.cn/iclouddrive/02bU__gRmYuYGFcouU-XUWM_Q#Checkpoints).
+
 
 ## Train
 
