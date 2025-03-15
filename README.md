@@ -52,7 +52,9 @@ pip install -r requirements.txt
 
 ### Downlaod Checkpoints
 Model checkpoints can be downloaded from [here](https://www.icloud.com.cn/iclouddrive/02bU__gRmYuYGFcouU-XUWM_Q#Checkpoints).
-
+- [One-Stage (No SD Maps)](TODO)
+- [One-Stage (Teacher)](TODO)
+- [One-Stage (Student)](TODO)
 
 ## Train
 
