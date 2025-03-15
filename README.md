@@ -30,7 +30,6 @@ Follow the [SMERF repo](https://github.com/NVlabs/SMERF/tree/main) to download a
 - PyTorch 1.10.1
 
 ### Environment Setup
-We recommend using [conda](https://www.anaconda.com/download) to run the code. Alternatively, we provide a [Dockerfile](Dockerfile) for ease of installation.
 
 ```bash
 conda create -n one_stage python=3.8 -y
