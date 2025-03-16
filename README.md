@@ -20,7 +20,7 @@ Understanding lane toplogy relationships accurately is critical for safe autonom
 
 ## Visualizations
 ![visualization](assets/one-stage-qualitative-results_20250226_Qualitative_Student_hand_drawn_three_col.png)
-Qualitative Comparisons} between TopoNet and our student network. Left (Multi-View Inputs): Visualization of corresponding multi-view inputs. Middle (LC and LC-LC Predictions): Purple indicates false positives, while blue denotes true positives. Right (TE and LC-TE Predictions): Green represents true positives, whereas red signifies false negatives.
+Qualitative Comparisons between TopoNet and our student network. Left (Multi-View Inputs): Visualization of corresponding multi-view inputs. Middle (LC and LC-LC Predictions): Purple indicates false positives, while blue denotes true positives. Right (TE and LC-TE Predictions): Green represents true positives, whereas red signifies false negatives.
 ## Demo Video
 [![Watch the video](assets/video.png)](https://youtu.be/erIOQVbZYug)
 
