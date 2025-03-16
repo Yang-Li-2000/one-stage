@@ -51,9 +51,9 @@ pip install -r requirements.txt
 ```
 
 ### Downlaod Checkpoints
-- [One-Stage (No SD Maps)](TODO)
-- [One-Stage (Teacher)](TODO)
-- [One-Stage (Student)](TODO)
+- [One-Stage (No SD Maps)](https://www.icloud.com.cn/iclouddrive/0e9q7HW7CrhIpd_W4bHDdnRIw#0206_one_stage_half_dim_and_half_connectivity_hidden_dim)
+- [One-Stage (Teacher)](https://www.icloud.com.cn/iclouddrive/015swjkMJlNv6loSJgOZ2-v0g#0211_one_stage_smerf_128_128_h02)
+- [One-Stage (Student)](https://www.icloud.com.cn/iclouddrive/017Gue75Av63UUB8nKZq7aVxQ#0205_one_stage_smerf_distill_4_card_half_dim_and_half_connectivity_hidden_dim_teacher_h02)
 
 ## Train
 
