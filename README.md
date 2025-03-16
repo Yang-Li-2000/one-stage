@@ -7,7 +7,7 @@
 <sup>1</sup> Institute for AI Industry Research (AIR), Tsinghua University. <sup>2</sup> Bosch Corporate Research. <br>
 <sup>3</sup> Institute for Interdisciplinary Information Sciences (IIIS), Tsinghua University. <br>
 <sup>4</sup> Department of Computer Science, ETH. <sup>5</sup> State Key Lab of Intelligent Transprotation System, Beihang University. <br>
-<sub>(* indicates equal contribution)</sub>
+<sub>(* indicates equal contribution)</sub> <br>
 Submitted to IROS 2025
 </div>
 
