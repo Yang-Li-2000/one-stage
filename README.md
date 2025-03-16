@@ -7,16 +7,20 @@
 <sup>1</sup> Institute for AI Industry Research (AIR), Tsinghua University. <sup>2</sup> Bosch Corporate Research. <br>
 <sup>3</sup> Institute for Interdisciplinary Information Sciences (IIIS), Tsinghua University. <br>
 <sup>4</sup> Department of Computer Science, ETH. <sup>5</sup> State Key Lab of Intelligent Transprotation System, Beihang University. <br>
-<sub>(* indicates equal contribution)</sub>
+<sub>(* indicates equal contribution)</sub> <br>
+Submitted to **IROS 2025**
 </div>
 
-# Overview 
-![Architecture](assets/architecture.png)
+## Overview 
+![pipeline](assets/overview_00.png)
 Understanding lane toplogy relationships accurately is critical for safe autonomous driving. However, existing two-stage methods suffer from inefficiencies due to error propagations and increased computational overheads. To address these challenges, we propose a one-stage architecture that simultaneously predicts traffic elements, lane centerlines and topology relationship, improving both the accuracy and inference speed of lane topology understanding for autonomous driving. Our key innovation lies in reusing intermediate attention resources within distinct transformer decoders. This approach effectively leverages the inherent relational knowledge within the element detection module to enable the modeling of topology relationships among traffic elements and lanes without requiring additional computationally expensive graph networks. Furthermore, we are the first to demonstrate that knowledge can be distilled from models that utilize standard definition (SD) maps to those operates without using SD maps, enabling superior performance even in the absence of SD maps. Extensive experiments on the OpenLane-V2 dataset show that our approach outperforms baseline methods in both accuracy and efficiency, achieving superior results in lane detection, traffic element identification, and topology reasoning.
 
 ## Results
 ![Main_Table](assets/results.png)
 
+## Visualizations
+![visualization](assets/one-stage-qualitative-results_20250226_Qualitative_Student_hand_drawn_three_col.png)
+Qualitative Comparisons between TopoNet and our student network. Left (Multi-View Inputs): Visualization of corresponding multi-view inputs. Middle (LC and LC-LC Predictions): Purple indicates false positives, while blue denotes true positives. Right (TE and LC-TE Predictions): Green represents true positives, whereas red signifies false negatives.
 ## Demo Video
 [![Watch the video](assets/video.png)](https://youtu.be/erIOQVbZYug)
 
@@ -52,9 +56,9 @@ pip install -r requirements.txt
 ```
 
 ### Downlaod Checkpoints
-- [One-Stage (No SD Maps)](https://www.icloud.com.cn/iclouddrive/0e9q7HW7CrhIpd_W4bHDdnRIw#0206_one_stage_half_dim_and_half_connectivity_hidden_dim)
-- [One-Stage (Teacher)](https://www.icloud.com.cn/iclouddrive/015swjkMJlNv6loSJgOZ2-v0g#0211_one_stage_smerf_128_128_h02)
-- [One-Stage (Student)](https://www.icloud.com.cn/iclouddrive/017Gue75Av63UUB8nKZq7aVxQ#0205_one_stage_smerf_distill_4_card_half_dim_and_half_connectivity_hidden_dim_teacher_h02)
+- [One-Stage (No SD Maps)](TODO)
+- [One-Stage (Teacher)](TODO)
+- [One-Stage (Student)](TODO)
 
 ## Train
 
