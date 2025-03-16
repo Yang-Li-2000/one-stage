@@ -18,6 +18,8 @@ Understanding lane toplogy relationships accurately is critical for safe autonom
 ## Results
 ![Main_Table](assets/results.png)
 
+##Visualizations
+
 ## Demo Video
 [![Watch the video](assets/video.png)](https://youtu.be/erIOQVbZYug)
 
