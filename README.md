@@ -93,7 +93,8 @@ bash tools/distributed_test_one_stage_smerf.sh 1
 ### Distillation
 [Use the `distillation+half_dim` branch](https://github.com/Yang-Li-2000/one-stage/tree/distillation%2Bhalf_dim).
 
-## Overview 
+## Citation
+If you find our work helpful, please cite us:
 
 ## License
 All assets and code are under the [Apache 2.0 license](./LICENSE) unless specified otherwise.
