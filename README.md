@@ -8,7 +8,7 @@
 <sup>3</sup> Institute for Interdisciplinary Information Sciences (IIIS), Tsinghua University. <br>
 <sup>4</sup> Department of Computer Science, ETH. <sup>5</sup> State Key Lab of Intelligent Transprotation System, Beihang University. <br>
 <sub>(* indicates equal contribution)</sub> <br>
-**IROS 2025**
+<h2><strong>IROS 2025</strong></h2>
 </div>
 
 ## Overview 
